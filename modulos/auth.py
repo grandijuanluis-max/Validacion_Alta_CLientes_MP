@@ -34,17 +34,13 @@ def login_form():
                         st.session_state['user_id'] = user['id']
                         st.session_state['user_email'] = user['email']
                         st.session_state['codigo_vendedor'] = user.get('codigo_vendedor')
-                        st.success("¡Ingreso exitoso! Por favor, haz clic abajo para continuar al panel.")
+                        st.rerun()
                     else:
                         st.error("Contraseña incorrecta")
                 else:
                     st.error("Usuario no encontrado en la base de datos.")
             except Exception as e:
                 st.error(f"Error al conectar con la base de datos: {e}")
-                
-    if st.session_state.get('logged_in', False):
-        if st.button("Continuar al Panel Principal"):
-            st.rerun()
 
 def logout():
     for key in ['logged_in', 'role', 'user_id', 'user_email', 'codigo_vendedor']:
