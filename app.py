@@ -18,6 +18,7 @@ def main():
 
     if not st.session_state['logged_in']:
         st.title("💼 MP - Alta Rápida de Clientes")
+        st.caption("🟢 Versión 1.1 - Sistema de Login Habilitado")
         login_form()
     else:
         # Sidebar layout for logged-in users
