@@ -7,10 +7,31 @@ st.set_page_config(
     layout="wide"
 )
 
+from modulos.auth import login_form, logout
+from modulos.ui_vendedor import render_vendedor_dashboard
+from modulos.ui_validador import render_validador_dashboard
+
 def main():
-    st.title("💼 MP - Alta Rápida de Clientes")
-    st.write("Bienvenido al sistema de carga de clientes.")
-    st.info("Módulo en construcción. Pronto agregaremos login y roles.")
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+        st.session_state['role'] = None
+
+    if not st.session_state['logged_in']:
+        st.title("💼 MP - Alta Rápida de Clientes")
+        login_form()
+    else:
+        # Sidebar layout for logged-in users
+        with st.sidebar:
+            st.write(f"Conectado como: **{st.session_state.get('user_email', '')}**")
+            st.write(f"Rol: **{st.session_state['role']}**")
+            logout()
+            
+        if st.session_state['role'] == 'vendedor':
+            render_vendedor_dashboard()
+        elif st.session_state['role'] == 'admin':
+            render_validador_dashboard()
+        else:
+            st.error("Rol no reconocido.")
 
 if __name__ == "__main__":
     main()
