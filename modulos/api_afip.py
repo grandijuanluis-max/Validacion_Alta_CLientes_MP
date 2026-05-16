@@ -1,45 +1,35 @@
 import requests
 import streamlit as st
-import dbf
-import os
 
-def buscar_datos_cp(c_postal_str):
+def consultar_cuit_afip(cuit):
     """
-    Busca el Código Postal en CODIGOSMP.DBI y retorna Localidad y País.
+    Consulta un CUIT en la API de AFIP.
+    Actualmente devuelve un mock, preparado para conectar la API real mañana.
     """
-    ruta_dbf = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'CODIGOSMP.DBI')
-    try:
-        if os.path.exists(ruta_dbf):
-            # Abrir en modo lectura
-            with dbf.Table(ruta_dbf) as table:
-                for record in table:
-                    if str(record.C_POSTAL).strip() == str(c_postal_str).strip():
-                        return {
-                            "localidad": str(record.LOCALIDAD).strip(),
-                            "pais": str(record.PAIS).strip()
-                        }
-    except Exception as e:
-        print(f"Error leyendo CODIGOSMP.DBI: {e}")
+    # TODO: Mañana conectaremos la API real aquí (WS_SR_PADRON_A5 o un wrapper REST).
+    # Esta es la estructura base que usaremos.
+    
+    # 1. Limpiar el CUIT
+    cuit_limpio = str(cuit).replace('-', '').strip()
+    
+    if len(cuit_limpio) != 11:
+        return {"error": "El CUIT debe tener 11 dígitos."}
         
-    return {"localidad": "", "pais": ""}
-
-def consultar_cuit(cuit_str):
-    """
-    Función para consultar el padrón de AFIP usando una API pública o privada.
-    Retorna un diccionario con Razón Social, Domicilios, Localidad, etc.
-    """
-    cuit_limpio = cuit_str.replace("-", "").strip()
-    
-    # TODO: Implementar la llamada real a la API acordada.
-    # Por ahora mockeamos una respuesta. Supongamos que AFIP nos devuelve el CP 2000.
-    cp_mock = "2000"
-    datos_extra = buscar_datos_cp(cp_mock)
-    
-    return {
-        "nombre": "EMPRESA DE PRUEBA SA",
-        "domicilio_f": "CALLE FALSA 123",
-        "domicilio_e": "CALLE FALSA 123",
-        "c_postal": cp_mock,
-        "localidad": datos_extra.get("localidad", "ROSARIO"),
-        "pais": datos_extra.get("pais", "ARGENTINA")
-    }
+    # --- MOCK DE RESPUESTA HASTA CONECTAR LA API REAL ---
+    if cuit_limpio == "30707738240":
+        return {
+            "nombre": "PRESEA SOFTWARE S.A.",
+            "estado": "Activo",
+            "domicilio_fiscal": "Av. Corrientes 1234, CABA",
+            "condicion_iva": "Responsable Inscripto",
+            "iibb": "901-234567-1"
+        }
+    else:
+        # Respuesta genérica para otros CUITS durante pruebas
+        return {
+            "nombre": f"Empresa de Prueba {cuit_limpio[-4:]}",
+            "estado": "Activo",
+            "domicilio_fiscal": "Calle Falsa 123",
+            "condicion_iva": "Responsable Inscripto",
+            "iibb": "000-000000-0"
+        }
