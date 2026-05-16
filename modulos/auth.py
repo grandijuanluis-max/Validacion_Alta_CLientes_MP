@@ -29,6 +29,10 @@ def check_login():
                 st.session_state['user_id'] = user['id']
                 st.session_state['user_email'] = user['email']
                 st.session_state['codigo_vendedor'] = user.get('codigo_vendedor')
+                # Nuevos Permisos Dinámicos
+                st.session_state['permiso_alta'] = user.get('permiso_alta', False)
+                st.session_state['permiso_validacion'] = user.get('permiso_validacion', False)
+                
                 st.session_state['login_error'] = None
             else:
                 st.session_state['login_error'] = "Contraseña incorrecta"
@@ -49,7 +53,7 @@ def login_form():
         st.error(st.session_state['login_error'])
 
 def logout():
-    for key in ['logged_in', 'role', 'user_id', 'user_email', 'codigo_vendedor']:
+    for key in ['logged_in', 'role', 'user_id', 'user_email', 'codigo_vendedor', 'permiso_alta', 'permiso_validacion']:
         if key in st.session_state:
             del st.session_state[key]
     st.rerun()
