@@ -113,18 +113,14 @@ def render_vendedor_dashboard():
                 nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
                 
             domicilio_f = st.text_input("Domicilio Fiscal", value=st.session_state['afip_data']['domicilio_f'])
-            domicilio_e = st.text_input("Domicilio Entrega")
+            domicilio_e = st.text_input("Domicilio Entrega", value=st.session_state['afip_data']['domicilio_f'])
             
-            col_loc, col_prov, col_cp = st.columns(3)
+            col_cp, col_loc, col_prov, col_pais = st.columns(4)
             
             loc_val = st.session_state['afip_data'].get('localidad', '')
             prov_val = st.session_state['afip_data'].get('provincia', '')
             cp_matches = buscar_cp(loc_val, prov_val)
             
-            with col_loc:
-                localidad = st.text_input("LOCALIDAD", value=loc_val)
-            with col_prov:
-                provincia = st.text_input("Provincia", value=prov_val)
             with col_cp:
                 if len(cp_matches) == 1:
                     c_postal = st.text_input("Código Postal", value=cp_matches[0], help="Autocompletado automático")
@@ -132,8 +128,13 @@ def render_vendedor_dashboard():
                     c_postal = st.selectbox("Código Postal Múltiple", cp_matches, help="Selecciona el CP exacto de la localidad")
                 else:
                     c_postal = st.text_input("Código Postal")
-                
-            pais = st.text_input("País", value="ARGENTINA")
+                    
+            with col_loc:
+                localidad = st.text_input("LOCALIDAD", value=loc_val)
+            with col_prov:
+                provincia = st.text_input("Provincia", value=prov_val)
+            with col_pais:
+                pais = st.text_input("País", value="ARGENTINA")
             
             st.subheader("Datos Complementarios")
             n_fantasia = st.text_input("Nombre Fantasia")
