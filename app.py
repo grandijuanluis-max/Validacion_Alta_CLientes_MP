@@ -25,7 +25,8 @@ def main():
         with st.sidebar:
             st.write(f"Conectado como: **{st.session_state.get('user_email', '')}**")
             st.write(f"Rol: **{st.session_state['role']}**")
-            logout()
+            if st.button("Cerrar Sesión"):
+                logout()
             
         if st.session_state['role'] == 'vendedor':
             render_vendedor_dashboard()
