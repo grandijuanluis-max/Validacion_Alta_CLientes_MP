@@ -34,15 +34,41 @@ def _generar_tra():
 
 def _firmar_tra(tra_xml):
     """Firma el TRA usando OpenSSL (PKCS#7 / CMS)"""
+    import tempfile
+    import streamlit as st
+    
     # Guardamos temporalmente el TRA
     tmp_tra = "/tmp/tra.xml"
     with open(tmp_tra, "w") as f:
         f.write(tra_xml)
         
+    # Lógica de seguridad para no exponer certificados en GitHub
+    cert_file_path = CERT_PATH
+    key_file_path = KEY_PATH
+    
+    archivos_temporales = []
+    
+    # Si estamos en la nube y los archivos no existen físicamente, leemos de los Secretos
+    if not os.path.exists(CERT_PATH) or not os.path.exists(KEY_PATH):
+        try:
+            cert_content = st.secrets["AFIP_CRT"]
+            key_content = st.secrets["AFIP_KEY"]
+            
+            # Creamos archivos temporales seguros
+            fd_cert, cert_file_path = tempfile.mkstemp(text=True)
+            fd_key, key_file_path = tempfile.mkstemp(text=True)
+            
+            with os.fdopen(fd_cert, 'w') as f: f.write(cert_content)
+            with os.fdopen(fd_key, 'w') as f: f.write(key_content)
+            
+            archivos_temporales.extend([cert_file_path, key_file_path])
+        except Exception:
+            return None # Fallará y mostrará el mensaje de error normal
+            
     # Ejecutamos OpenSSL para firmar
     cmd = [
         "openssl", "cms", "-sign", "-in", tmp_tra,
-        "-signer", CERT_PATH, "-inkey", KEY_PATH,
+        "-signer", cert_file_path, "-inkey", key_file_path,
         "-nodetach", "-outform", "PEM"
     ]
     
@@ -67,6 +93,9 @@ def _firmar_tra(tra_xml):
     finally:
         if os.path.exists(tmp_tra):
             os.remove(tmp_tra)
+        for tmp_file in archivos_temporales:
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
 
 def _obtener_token_wsaa():
     """Obtiene el Token y Sign del WSAA usando caché si está vigente"""
