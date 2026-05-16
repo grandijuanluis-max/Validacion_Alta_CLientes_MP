@@ -24,16 +24,32 @@ def main():
         # Sidebar layout for logged-in users
         with st.sidebar:
             st.write(f"Conectado como: **{st.session_state.get('user_email', '')}**")
-            st.write(f"Rol: **{st.session_state['role']}**")
+            st.write(f"Rol base: **{st.session_state.get('role', '')}**")
+            
+            st.divider()
+            
+            # Construir el menú de navegación basado en permisos
+            menu_options = []
+            if st.session_state.get('permiso_alta', False):
+                menu_options.append("Alta de Clientes")
+            if st.session_state.get('permiso_validacion', False):
+                menu_options.append("Validar Clientes")
+                
+            if not menu_options:
+                st.warning("No tienes permisos asignados a ninguna sección.")
+                seleccion = None
+            else:
+                seleccion = st.radio("Navegación", menu_options)
+            
+            st.divider()
             if st.button("Cerrar Sesión"):
                 logout()
             
-        if st.session_state['role'] == 'vendedor':
+        # Renderizar la sección seleccionada
+        if seleccion == "Alta de Clientes":
             render_vendedor_dashboard()
-        elif st.session_state['role'] == 'admin':
+        elif seleccion == "Validar Clientes":
             render_validador_dashboard()
-        else:
-            st.error("Rol no reconocido.")
 
 if __name__ == "__main__":
     main()
