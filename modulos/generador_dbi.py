@@ -25,28 +25,28 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
     
     for index, row in dataframe_clientes.iterrows():
         # Limpieza de CUIT a numérico
-        cuit_num = str(row.get('CUIT', '0')).replace('-', '').replace(' ', '')
+        cuit_num = str(row.get('cuit', '0')).replace('-', '').replace(' ', '')
         if not cuit_num.isdigit(): cuit_num = 0
         else: cuit_num = int(cuit_num)
             
         codigo_vendedor = 0
-        try: codigo_vendedor = int(row.get('VENDEDOR', 0))
+        try: codigo_vendedor = int(row.get('codigo_vendedor', 0))
         except: pass
         
         # Armamos la tupla respetando el orden del schema
         registro = (
             codigo_actual,                      # CODIGO
             cuit_num,                           # CUIT
-            str(row.get('NOMBRE', ''))[:30],      # NOMBRE
-            str(row.get('N_FANTASIA', ''))[:30],  # N_FANTASIA
-            str(row.get('DOMICILIO', ''))[:50],   # DOMICILIO (Fiscal)
-            str(row.get('DOMICILIOE', ''))[:50],  # DOMICILIOE (Entrega)
-            str(row.get('LOCALIDAD', ''))[:35],   # LOCALIDAD
-            str(row.get('C_POSTAL', ''))[:5],     # C_POSTAL
-            str(row.get('PAIS', ''))[:15],        # PAIS
-            str(row.get('CONTACTO', ''))[:30],    # CONTACTO
-            str(row.get('TELEFONO', ''))[:40],    # TELEFONO
-            str(row.get('RUBRO', ''))[:30],       # RUBRO (Giro Comercial)
+            str(row.get('nombre', ''))[:30],      # NOMBRE
+            str(row.get('n_fantasia', ''))[:30],  # N_FANTASIA
+            str(row.get('domicilio_f', ''))[:50],   # DOMICILIO (Fiscal)
+            str(row.get('domicilio_e', ''))[:50],  # DOMICILIOE (Entrega)
+            str(row.get('localidad', ''))[:35],   # LOCALIDAD
+            str(row.get('c_postal', ''))[:5],     # C_POSTAL
+            str(row.get('pais', ''))[:15],        # PAIS
+            str(row.get('contacto', ''))[:30],    # CONTACTO
+            str(row.get('telefono', ''))[:40],    # TELEFONO
+            str(row.get('giro_comercial', ''))[:30],       # RUBRO (Giro Comercial)
             codigo_vendedor                     # VENDEDOR
         )
         table.append(registro)

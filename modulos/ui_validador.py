@@ -13,7 +13,8 @@ def render_validador_dashboard():
         return
 
     try:
-        response = supabase.table('clientes_pendientes').select('*').eq('estado', 'Pendiente').execute()
+        # Hacemos un JOIN con la tabla usuarios para traernos el codigo_vendedor
+        response = supabase.table('clientes_pendientes').select('*, usuarios(codigo_vendedor)').eq('estado', 'Pendiente').execute()
         
         if not response.data:
             st.info("No hay clientes pendientes de validación.")
@@ -21,6 +22,12 @@ def render_validador_dashboard():
             
         df = pd.DataFrame(response.data)
         
+        # Extraer el codigo_vendedor del JSON anidado
+        if 'usuarios' in df.columns:
+            df['codigo_vendedor'] = df['usuarios'].apply(lambda x: x.get('codigo_vendedor', 0) if isinstance(x, dict) else 0)
+        else:
+            df['codigo_vendedor'] = 0
+            
         # Mapeo para visualización (se muestran solo algunas columnas para no saturar)
         display_df = df[['cuit', 'nombre', 'localidad', 'estado']].copy()
         display_df.rename(columns={'cuit': 'CUIT', 'nombre': 'Nombre', 'localidad': 'Localidad', 'estado': 'Estado'}, inplace=True)
