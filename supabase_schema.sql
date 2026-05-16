@@ -47,7 +47,7 @@ INSERT INTO public.secuencia_codigo (ultimo_valor) VALUES (0);
 
 -- 4. Tabla de Ramos (Alta velocidad)
 CREATE TABLE public.ramos (
-    id SERIAL PRIMARY KEY,
+    ramo NUMERIC PRIMARY KEY,
     descrip TEXT NOT NULL UNIQUE
 );
 -- Índice para búsquedas rápidas (por si a futuro hay autocompletado en ramos)
