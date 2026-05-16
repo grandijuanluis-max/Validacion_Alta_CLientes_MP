@@ -105,77 +105,88 @@ def render_vendedor_dashboard():
         st.divider()
         st.subheader("Paso 2: Completar y Enviar")
         
-        with st.form("alta_cliente_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'])
-            with col2:
-                nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
+        col1, col2 = st.columns(2)
+        with col1:
+            cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'])
+        with col2:
+            nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
+            
+        domicilio_f = st.text_input("Domicilio Fiscal *", value=st.session_state['afip_data']['domicilio_f'])
+        domicilio_e = st.text_input("Domicilio Entrega *", value=st.session_state['afip_data']['domicilio_f'])
+        
+        col_cp, col_loc, col_prov, col_pais = st.columns(4)
+        
+        with col_loc:
+            localidad = st.text_input("LOCALIDAD *", value=st.session_state['afip_data'].get('localidad', ''))
+        with col_prov:
+            provincia = st.text_input("Provincia *", value=st.session_state['afip_data'].get('provincia', ''))
+            
+        # Reactividad en tiempo real: Se evalúan los valores tipeados en el momento
+        cp_matches = buscar_cp(localidad, provincia)
+        
+        with col_cp:
+            if len(cp_matches) == 1:
+                c_postal = st.text_input("Código Postal *", value=cp_matches[0], help="Autocompletado automático")
+            elif len(cp_matches) > 1:
+                c_postal = st.selectbox("Código Postal *", cp_matches, help="Selecciona el CP exacto de la localidad")
+            else:
+                c_postal = st.text_input("Código Postal *")
                 
-            domicilio_f = st.text_input("Domicilio Fiscal", value=st.session_state['afip_data']['domicilio_f'])
-            domicilio_e = st.text_input("Domicilio Entrega", value=st.session_state['afip_data']['domicilio_f'])
+        with col_pais:
+            pais = st.text_input("País *", value="ARGENTINA")
+        
+        st.subheader("Datos Complementarios")
+        n_fantasia = st.text_input("Nombre Fantasia")
+        contacto = st.text_input("Persona de Contacto")
+        telefono = st.text_input("Telefono de contacto")
+        
+        ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
+        giro_comercial = st.selectbox("Giro Comercial (Rubro)", ramos_disponibles)
+        
+        submit = st.button("Guardar y Enviar a Validación", type="primary", use_container_width=True)
+        
+        if submit:
+            # Validación estricta de campos obligatorios
+            faltantes = []
+            if not cuit.strip(): faltantes.append("CUIT")
+            if not nombre.strip(): faltantes.append("NOMBRE (Razón Social)")
+            if not domicilio_f.strip(): faltantes.append("Domicilio Fiscal")
+            if not domicilio_e.strip(): faltantes.append("Domicilio Entrega")
+            if not localidad.strip(): faltantes.append("LOCALIDAD")
+            if not provincia.strip(): faltantes.append("Provincia")
+            if not str(c_postal).strip(): faltantes.append("Código Postal")
+            if not pais.strip(): faltantes.append("País")
             
-            col_cp, col_loc, col_prov, col_pais = st.columns(4)
-            
-            loc_val = st.session_state['afip_data'].get('localidad', '')
-            prov_val = st.session_state['afip_data'].get('provincia', '')
-            cp_matches = buscar_cp(loc_val, prov_val)
-            
-            with col_cp:
-                if len(cp_matches) == 1:
-                    c_postal = st.text_input("Código Postal", value=cp_matches[0], help="Autocompletado automático")
-                elif len(cp_matches) > 1:
-                    c_postal = st.selectbox("Código Postal Múltiple", cp_matches, help="Selecciona el CP exacto de la localidad")
-                else:
-                    c_postal = st.text_input("Código Postal")
-                    
-            with col_loc:
-                localidad = st.text_input("LOCALIDAD", value=loc_val)
-            with col_prov:
-                provincia = st.text_input("Provincia", value=prov_val)
-            with col_pais:
-                pais = st.text_input("País", value="ARGENTINA")
-            
-            st.subheader("Datos Complementarios")
-            n_fantasia = st.text_input("Nombre Fantasia")
-            contacto = st.text_input("Persona de Contacto")
-            telefono = st.text_input("Telefono de contacto")
-            
-            ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
-            giro_comercial = st.selectbox("Giro Comercial (Rubro)", ramos_disponibles)
-            
-            submit = st.form_submit_button("Guardar y Enviar a Validación", type="primary")
-            
-            if submit:
-                if not cuit or not nombre:
-                    st.error("Por favor completa el CUIT y la Razón Social.")
-                elif supabase is None:
-                    st.error("No hay conexión a la base de datos configurada.")
-                else:
-                    try:
-                        data = {
-                            "cuit": cuit.upper() if cuit else "",
-                            "nombre": nombre.upper() if nombre else "",
-                            "n_fantasia": n_fantasia.upper() if n_fantasia else "",
-                            "domicilio_f": domicilio_f.upper() if domicilio_f else "",
-                            "domicilio_e": domicilio_e.upper() if domicilio_e else "",
-                            "localidad": localidad.upper() if localidad else "",
-                            "provincia": provincia.upper() if provincia else "",
-                            "c_postal": c_postal.upper() if c_postal else "",
-                            "pais": pais.upper() if pais else "",
-                            "contacto": contacto.upper() if contacto else "",
-                            "telefono": telefono.upper() if telefono else "",
-                            "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
-                            "creado_por": st.session_state.get('user_id'),
-                            "estado": "Pendiente"
-                        }
-                        response = supabase.table('clientes_pendientes').insert(data).execute()
-                        st.success("¡Cliente guardado exitosamente y en espera de validación!")
-                        # Limpiar estado para el próximo cliente
-                        st.session_state['afip_data'] = {
-                            "cuit": "", "nombre": "", "domicilio_f": "", 
-                            "localidad": "", "provincia": "", "cp": "", "estado": ""
-                        }
-                        st.session_state['modo_carga'] = None
-                    except Exception as e:
-                        st.error(f"Error al guardar el cliente: {e}")
+            if faltantes:
+                st.error(f"❌ Error: Faltan completar los siguientes campos obligatorios: {', '.join(faltantes)}")
+            elif supabase is None:
+                st.error("No hay conexión a la base de datos configurada.")
+            else:
+                try:
+                    data = {
+                        "cuit": cuit.upper() if cuit else "",
+                        "nombre": nombre.upper() if nombre else "",
+                        "n_fantasia": n_fantasia.upper() if n_fantasia else "",
+                        "domicilio_f": domicilio_f.upper() if domicilio_f else "",
+                        "domicilio_e": domicilio_e.upper() if domicilio_e else "",
+                        "localidad": localidad.upper() if localidad else "",
+                        "provincia": provincia.upper() if provincia else "",
+                        "c_postal": str(c_postal).upper() if c_postal else "",
+                        "pais": pais.upper() if pais else "",
+                        "contacto": contacto.upper() if contacto else "",
+                        "telefono": telefono.upper() if telefono else "",
+                        "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
+                        "creado_por": st.session_state.get('user_id'),
+                        "estado": "Pendiente"
+                    }
+                    response = supabase.table('clientes_pendientes').insert(data).execute()
+                    st.success("¡Cliente guardado exitosamente y en espera de validación!")
+                    # Limpiar estado para el próximo cliente
+                    st.session_state['afip_data'] = {
+                        "cuit": "", "nombre": "", "domicilio_f": "", 
+                        "localidad": "", "provincia": "", "cp": "", "estado": ""
+                    }
+                    st.session_state['modo_carga'] = None
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar el cliente: {e}")
