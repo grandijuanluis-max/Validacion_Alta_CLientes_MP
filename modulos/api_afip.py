@@ -132,7 +132,15 @@ def _obtener_token_wsaa():
     
     if resp.status_code == 200:
         root = ET.fromstring(resp.text)
-        login_cms_return = root.find('.//loginCmsReturn').text
+        login_cms_return = None
+        for elem in root.iter():
+            if 'loginCmsReturn' in elem.tag:
+                login_cms_return = elem.text
+                break
+                
+        if not login_cms_return:
+            raise Exception("Error al procesar XML del WSAA: no se encontró loginCmsReturn.")
+            
         return_root = ET.fromstring(login_cms_return)
         token = return_root.find('.//token').text
         sign = return_root.find('.//sign').text
@@ -182,17 +190,27 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             
         root = ET.fromstring(resp.text)
         
-        # Parseo de errores si existen
-        error_node = root.find('.//errorConstancia')
-        if error_node is not None:
-            err_msg = error_node.find('error').text
-            return {"error": err_msg}
+        # Búsqueda agnóstica de namespaces
+        def get_node(node, tag_name):
+            if node is None: return None
+            for elem in node.iter():
+                if tag_name in elem.tag:
+                    return elem
+            return None
             
-        persona = root.find('.//personaReturn')
+        def get_text(node, tag_name):
+            elem = get_node(node, tag_name)
+            return elem.text if elem is not None else None
+
+        error_node = get_node(root, 'errorConstancia')
+        if error_node is not None:
+            err_msg = get_text(error_node, 'error')
+            return {"error": err_msg or "Error desconocido en Padrón"}
+            
+        persona = get_node(root, 'personaReturn')
         if persona is None:
             return {"error": f"CUIT no encontrado en el Padrón {PADRON_VERSION.upper()}."}
             
-        # Extracción de datos
         datos = {
             "nombre": "",
             "estado": "Inactivo",
@@ -200,43 +218,35 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             "condicion_iva": "Exento / Monotributo"
         }
         
-        # Nombre (puede estar en nombre, apellido o razonSocial)
-        razon_social = persona.find('.//razonSocial')
-        nombre = persona.find('.//nombre')
-        apellido = persona.find('.//apellido')
+        razon_social = get_text(persona, 'razonSocial')
+        nombre = get_text(persona, 'nombre')
+        apellido = get_text(persona, 'apellido')
         
-        if razon_social is not None and razon_social.text:
-            datos["nombre"] = razon_social.text
-        elif nombre is not None and apellido is not None:
-            datos["nombre"] = f"{apellido.text} {nombre.text}"
+        if razon_social:
+            datos["nombre"] = razon_social
+        elif nombre and apellido:
+            datos["nombre"] = f"{apellido} {nombre}"
             
-        # Estado
-        estado_clave = persona.find('.//estadoClave')
-        if estado_clave is not None and estado_clave.text == "ACTIVO":
+        estado_clave = get_text(persona, 'estadoClave')
+        if estado_clave == "ACTIVO":
             datos["estado"] = "Activo"
             
-        # Domicilio
-        domicilio = persona.find('.//domicilio')
+        domicilio = get_node(persona, 'domicilio')
         if domicilio is not None:
-            direccion = domicilio.find('.//direccion')
-            localidad = domicilio.find('.//localidad')
-            provincia = domicilio.find('.//descripcionProvincia')
-            cp = domicilio.find('.//codPostal')
+            direccion = get_text(domicilio, 'direccion')
+            localidad = get_text(domicilio, 'localidad')
+            provincia = get_text(domicilio, 'descripcionProvincia')
             
-            partes_domicilio = []
-            if direccion is not None and direccion.text: partes_domicilio.append(direccion.text)
-            if localidad is not None and localidad.text: partes_domicilio.append(localidad.text)
-            if provincia is not None and provincia.text: partes_domicilio.append(provincia.text)
+            partes = [p for p in [direccion, localidad, provincia] if p]
+            datos["domicilio_fiscal"] = ", ".join(partes)
             
-            datos["domicilio_fiscal"] = ", ".join(partes_domicilio)
-            
-        # Impuestos (IVA = 30)
-        impuestos = persona.findall('.//impuesto')
-        for imp in impuestos:
-            id_impuesto = imp.find('idImpuesto')
-            if id_impuesto is not None and id_impuesto.text == '30':
-                datos["condicion_iva"] = "Responsable Inscripto"
-                break
+        # Impuestos
+        for imp in persona.iter():
+            if 'impuesto' in imp.tag:
+                id_imp = get_text(imp, 'idImpuesto')
+                if id_imp == '30':
+                    datos["condicion_iva"] = "Responsable Inscripto"
+                    break
                 
         return datos
 
