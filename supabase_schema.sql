@@ -6,8 +6,10 @@ CREATE TABLE public.usuarios (
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL, -- En producción usar Auth de Supabase, para el MVP guardamos el hash o texto aquí si armamos un auth simple.
     role TEXT NOT NULL CHECK (role IN ('vendedor', 'admin')),
-    nombre_vendedor TEXT,
-    codigo_vendedor NUMERIC -- El código que va en el campo VENDEDOR del DBI
+    usuario TEXT,
+    codigo_vendedor NUMERIC, -- El código que va en el campo VENDEDOR del DBI
+    permiso_alta BOOLEAN DEFAULT FALSE,
+    permiso_validacion BOOLEAN DEFAULT FALSE
 );
 
 -- 2. Tabla de Clientes Pendientes
@@ -23,6 +25,7 @@ CREATE TABLE public.clientes_pendientes (
     domicilio_f TEXT, -- Domicilio Fiscal
     domicilio_e TEXT, -- Domicilio Entrega
     localidad TEXT,
+    provincia TEXT, -- Provincia
     c_postal TEXT,
     pais TEXT, -- Nuevo campo de PAIS
     contacto TEXT,
