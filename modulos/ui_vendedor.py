@@ -5,41 +5,35 @@ from modulos.api_afip import consultar_cuit_afip
 from modulos.db import supabase
 
 def cargar_ramos():
-    ruta_ramo = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'ramo.csv')
+    if supabase is None:
+        return ["Kiosco", "Supermercado", "Ferretería"]
     try:
-        df = pd.read_csv(ruta_ramo, sep=';')
-        return df['descrip'].tolist()
-    except Exception as e:
-        return ["Kiosco", "Supermercado", "Ferretería"] # Fallback
+        response = supabase.table('ramos').select('descrip').execute()
+        if response.data:
+            return sorted([row['descrip'] for row in response.data])
+        return ["Kiosco", "Supermercado", "Ferretería"]
+    except Exception:
+        return ["Kiosco", "Supermercado", "Ferretería"]
 
 @st.cache_data
-def cargar_codigos_postales():
-    ruta_cp = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'codigos_postales.csv')
-    if not os.path.exists(ruta_cp):
-        return pd.DataFrame(columns=['localidad', 'provincia', 'cp'])
-    try:
-        df = pd.read_csv(ruta_cp, sep=';', dtype=str)
-        df.columns = [col.lower().strip() for col in df.columns]
-        return df
-    except Exception:
-        return pd.DataFrame(columns=['localidad', 'provincia', 'cp'])
-
 def buscar_cp(localidad, provincia):
-    if not localidad or not provincia:
-        return []
-        
-    df = cargar_codigos_postales()
-    if df.empty or 'localidad' not in df.columns or 'provincia' not in df.columns or 'cp' not in df.columns:
+    if not localidad or not provincia or supabase is None:
         return []
         
     loc_upper = str(localidad).upper().strip()
     prov_upper = str(provincia).upper().strip()
     
-    matches = df[
-        (df['localidad'].str.upper().str.strip() == loc_upper) & 
-        (df['provincia'].str.upper().str.strip() == prov_upper)
-    ]
-    return matches['cp'].dropna().unique().tolist()
+    try:
+        # Búsqueda SQL de alto rendimiento gracias a los índices ILIKE
+        response = supabase.table('codigos_postales').select('cp').ilike('localidad', loc_upper).ilike('provincia', prov_upper).execute()
+        
+        if response.data:
+            cps = list(set([str(row['cp']) for row in response.data if row.get('cp')]))
+            return sorted(cps)
+        return []
+    except Exception as e:
+        print(f"Error buscando CP en Supabase: {e}")
+        return []
 
 def render_vendedor_dashboard():
     st.header("🏢 Alta de Nuevo Cliente")
