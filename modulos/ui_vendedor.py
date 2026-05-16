@@ -126,27 +126,28 @@ def render_vendedor_dashboard():
         
         with col_cp:
             if len(cp_matches) == 1:
-                c_postal = st.text_input("Código Postal *", value=cp_matches[0], help="Autocompletado automático")
+                c_postal = st.text_input("Código Postal *", value=cp_matches[0], help="Autocompletado desde Base de Datos")
             elif len(cp_matches) > 1:
-                c_postal = st.selectbox("Código Postal *", cp_matches, help="Selecciona el CP exacto de la localidad")
+                c_postal = st.selectbox("Código Postal *", cp_matches, help="Múltiples opciones encontradas en la Base de Datos")
             else:
-                c_postal = st.text_input("Código Postal *")
+                c_postal = st.text_input("Código Postal *", help="No encontrado en Base de Datos. Ingresa manualmente.")
+                st.warning("⚠️ Localidad no encontrada. Ingresa el CP a mano.")
                 
         with col_pais:
             pais = st.text_input("País *", value="ARGENTINA")
         
         st.subheader("Datos Complementarios")
-        n_fantasia = st.text_input("Nombre Fantasia")
-        contacto = st.text_input("Persona de Contacto")
-        telefono = st.text_input("Telefono de contacto")
+        n_fantasia = st.text_input("Nombre Fantasia *", value=st.session_state['afip_data']['nombre'])
+        contacto = st.text_input("Persona de Contacto *")
+        telefono = st.text_input("Telefono de contacto *")
         
         ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
-        giro_comercial = st.selectbox("Giro Comercial (Rubro)", ramos_disponibles)
+        giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles)
         
         submit = st.button("Guardar y Enviar a Validación", type="primary", use_container_width=True)
         
         if submit:
-            # Validación estricta de campos obligatorios
+            # Validación estricta de TODOS los campos obligatorios
             faltantes = []
             if not cuit.strip(): faltantes.append("CUIT")
             if not nombre.strip(): faltantes.append("NOMBRE (Razón Social)")
@@ -156,6 +157,10 @@ def render_vendedor_dashboard():
             if not provincia.strip(): faltantes.append("Provincia")
             if not str(c_postal).strip(): faltantes.append("Código Postal")
             if not pais.strip(): faltantes.append("País")
+            if not n_fantasia.strip(): faltantes.append("Nombre Fantasía")
+            if not contacto.strip(): faltantes.append("Persona de Contacto")
+            if not telefono.strip(): faltantes.append("Teléfono de Contacto")
+            if giro_comercial == "Seleccione un ramo...": faltantes.append("Giro Comercial (Rubro)")
             
             if faltantes:
                 st.error(f"❌ Error: Faltan completar los siguientes campos obligatorios: {', '.join(faltantes)}")
