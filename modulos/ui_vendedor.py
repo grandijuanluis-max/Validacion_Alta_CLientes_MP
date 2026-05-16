@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from modulos.api_afip import consultar_cuit
+from modulos.api_afip import consultar_cuit_afip
 from modulos.db import supabase
 
 def cargar_ramos():
