@@ -45,4 +45,20 @@ CREATE TABLE public.secuencia_codigo (
 -- Inicializamos en 0 (arrancará del 1 cuando insertemos)
 INSERT INTO public.secuencia_codigo (ultimo_valor) VALUES (0);
 
--- NOTA: La tabla RAMO y Códigos Postales pueden cargarse vía CSV directo a Supabase.
+-- 4. Tabla de Ramos (Alta velocidad)
+CREATE TABLE public.ramos (
+    id SERIAL PRIMARY KEY,
+    descrip TEXT NOT NULL UNIQUE
+);
+-- Índice para búsquedas rápidas (por si a futuro hay autocompletado en ramos)
+CREATE INDEX idx_ramos_descrip ON public.ramos(descrip);
+
+-- 5. Tabla de Códigos Postales (Alta velocidad para +20.000 registros)
+CREATE TABLE public.codigos_postales (
+    id SERIAL PRIMARY KEY,
+    localidad TEXT NOT NULL,
+    provincia TEXT NOT NULL,
+    cp TEXT NOT NULL
+);
+-- Índice COMPUESTO crítico para que el filtro de AFIP vuele (Localidad + Provincia)
+CREATE INDEX idx_codigos_postales_loc_prov ON public.codigos_postales(localidad, provincia);
