@@ -37,14 +37,33 @@ def render_validador_dashboard():
         st.divider()
         
         if st.button("Exportar Pendientes a Presea (.DBI)", type="primary"):
-            # Generar DBI (se pasa el df completo porque el generador_dbi necesita todos los datos)
-            generar_archivo_dbi(df)
+            # Consultar la secuencia actual
+            secuencia_resp = supabase.table('secuencia_codigo').select('ultimo_valor').eq('id', 1).execute()
+            if not secuencia_resp.data:
+                ultimo_valor = 0
+            else:
+                ultimo_valor = secuencia_resp.data[0]['ultimo_valor']
+                
+            numero_inicio = int(ultimo_valor) + 1
+            
+            # Generar DBI
+            ruta_salida, nuevo_codigo_actual = generar_archivo_dbi(df, numero_inicio_codigo=numero_inicio)
+            
+            # El generador suma 1 al final del loop, por ende el último asignado es nuevo_codigo_actual - 1
+            ultimo_asignado = nuevo_codigo_actual - 1
             
             # Actualizar estado en Supabase
             for index, row in df.iterrows():
                 supabase.table('clientes_pendientes').update({'estado': 'Exportado'}).eq('id', row['id']).execute()
                 
-            st.success("¡Archivo generado con éxito y clientes marcados como Exportados! El autómata lo procesará en breve.")
+            # Actualizar la secuencia con el nuevo tope
+            if secuencia_resp.data:
+                supabase.table('secuencia_codigo').update({'ultimo_valor': ultimo_asignado}).eq('id', 1).execute()
+            else:
+                supabase.table('secuencia_codigo').insert({'id': 1, 'ultimo_valor': ultimo_asignado}).execute()
+                
+            st.success(f"¡Archivo generado con éxito! Clientes exportados correctamente.")
+            st.info(f"Se generaron códigos correlativos desde el {numero_inicio} hasta el {ultimo_asignado}.")
             st.rerun()
             
     except Exception as e:

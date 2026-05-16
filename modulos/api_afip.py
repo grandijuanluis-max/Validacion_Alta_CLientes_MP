@@ -215,6 +215,8 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             "nombre": "",
             "estado": "Inactivo",
             "domicilio_fiscal": "",
+            "localidad": "",
+            "provincia": "",
             "condicion_iva": "Exento / Monotributo"
         }
         
@@ -237,8 +239,9 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             localidad = get_text(domicilio, 'localidad')
             provincia = get_text(domicilio, 'descripcionProvincia')
             
-            partes = [p for p in [direccion, localidad, provincia] if p]
-            datos["domicilio_fiscal"] = ", ".join(partes)
+            datos["domicilio_fiscal"] = direccion if direccion else ""
+            datos["localidad"] = localidad if localidad else ""
+            datos["provincia"] = provincia if provincia else ""
             
         # Impuestos
         for imp in persona.iter():
