@@ -8,8 +8,11 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 # --- CONFIGURACIÓN AFIP PRODUCCIÓN ---
+# CAMBIA ESTO SEGÚN EL PADRÓN QUE AFIP TE PERMITA DELEGAR (a4, a5, a10, a13)
+PADRON_VERSION = "a13" 
+
 WSAA_URL = "https://wsaa.afip.gov.ar/ws/services/LoginCms"
-WS_PADRON_URL = "https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5"
+WS_PADRON_URL = f"https://aws.afip.gov.ar/sr-padron/webservices/personaService{PADRON_VERSION.upper()}"
 CERT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "certs", "certificado.crt")
 KEY_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "certs", "afip.key")
 CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".streamlit", "afip_auth.json")
@@ -28,7 +31,7 @@ def _generar_tra():
     <generationTime>{ahora.strftime('%Y-%m-%dT%H:%M:%S-00:00')}</generationTime>
     <expirationTime>{expiracion.strftime('%Y-%m-%dT%H:%M:%S-00:00')}</expirationTime>
   </header>
-  <service>ws_sr_padron_a5</service>
+  <service>ws_sr_padron_{PADRON_VERSION.lower()}</service>
 </loginTicketRequest>"""
     return tra_xml
 
@@ -130,7 +133,6 @@ def _obtener_token_wsaa():
     if resp.status_code == 200:
         root = ET.fromstring(resp.text)
         login_cms_return = root.find('.//loginCmsReturn').text
-        # La respuesta es otro XML anidado
         return_root = ET.fromstring(login_cms_return)
         token = return_root.find('.//token').text
         sign = return_root.find('.//sign').text
@@ -141,11 +143,13 @@ def _obtener_token_wsaa():
             
         return token, sign
     else:
+        if "notAuthorized" in resp.text or "Computador no autorizado" in resp.text:
+            raise Exception(f"Tu certificado digital es válido, pero aún no tiene permisos para 'Consulta Padrón {PADRON_VERSION.upper()}'. Debes ingresar a ARCA (AFIP) -> Administrador de Relaciones de Clave Fiscal -> Nueva Relación, elegir el servicio 'Consulta Padrón {PADRON_VERSION.upper()}' y vincularlo al alias de tu computador. Si ya lo hiciste, recuerda que ARCA tarda hasta 1 hora en habilitarlo.")
         raise Exception(f"Fallo Login AFIP: {resp.text}")
 
 def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
     """
-    Consulta un CUIT en el servicio Padrón A5 de AFIP.
+    Consulta un CUIT en el servicio Padrón dinámico de AFIP.
     cuit_representante: Es el CUIT de Juan Luis (dueño del certificado).
     """
     cuit_limpio = str(cuit).replace('-', '').strip()
@@ -155,17 +159,18 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
     try:
         token, sign = _obtener_token_wsaa()
         
-        # Petición SOAP a Padrón A5
+        # Petición SOAP al Padrón dinámico
+        ns = PADRON_VERSION.lower()
         soap_request = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:a5="http://a5.soap.ws.server.puc.sr/">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:{ns}="http://{ns}.soap.ws.server.puc.sr/">
    <soapenv:Header/>
    <soapenv:Body>
-      <a5:getPersona>
+      <{ns}:getPersona>
          <token>{token}</token>
          <sign>{sign}</sign>
          <cuitRepresentada>{cuit_representante}</cuitRepresentada>
          <idPersona>{cuit_limpio}</idPersona>
-      </a5:getPersona>
+      </{ns}:getPersona>
    </soapenv:Body>
 </soapenv:Envelope>"""
 
@@ -185,7 +190,7 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             
         persona = root.find('.//personaReturn')
         if persona is None:
-            return {"error": "CUIT no encontrado en el Padrón A5."}
+            return {"error": f"CUIT no encontrado en el Padrón {PADRON_VERSION.upper()}."}
             
         # Extracción de datos
         datos = {
