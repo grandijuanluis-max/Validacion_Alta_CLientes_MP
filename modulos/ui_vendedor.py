@@ -15,30 +15,63 @@ def cargar_ramos():
 def render_vendedor_dashboard():
     st.header("🏢 Alta de Nuevo Cliente")
     
+    # Inicializar estado para los campos si no existen
+    if 'afip_data' not in st.session_state:
+        st.session_state['afip_data'] = {
+            "cuit": "", "nombre": "", "domicilio_f": "", 
+            "localidad": "", "provincia": "", "cp": "", "estado": ""
+        }
+
+    st.subheader("1. Buscar en AFIP")
+    col_cuit, col_btn = st.columns([2, 1])
+    
+    with col_cuit:
+        cuit_busqueda = st.text_input("Ingresa el CUIT (Ej: 30111111111)", value=st.session_state['afip_data']['cuit'])
+        
+    with col_btn:
+        st.write("") # Espaciador
+        st.write("") # Espaciador
+        if st.button("🔍 Buscar Datos"):
+            if not cuit_busqueda:
+                st.warning("Escribe un CUIT primero.")
+            else:
+                with st.spinner("Consultando Padrón AFIP..."):
+                    from modulos.api_afip import consultar_cuit_afip
+                    resultado = consultar_cuit_afip(cuit_busqueda)
+                    
+                    if "error" in resultado:
+                        st.error(resultado["error"])
+                    else:
+                        st.success(f"¡Encontrado! Estado: {resultado.get('estado', 'Desconocido')}")
+                        st.session_state['afip_data']['cuit'] = cuit_busqueda
+                        st.session_state['afip_data']['nombre'] = resultado.get('nombre', '')
+                        
+                        # Extraer CP, Localidad, Provincia del domicilio si es posible
+                        domicilio_completo = resultado.get('domicilio_fiscal', '')
+                        st.session_state['afip_data']['domicilio_f'] = domicilio_completo
+                        st.session_state['afip_data']['estado'] = resultado.get('estado', '')
+                        st.rerun()
+
+    st.divider()
+    st.subheader("2. Completar Datos del Cliente")
+    
     with st.form("alta_cliente_form"):
-        st.subheader("Datos Fiscales")
-        col1, col2 = st.columns([1, 2])
-        
+        col1, col2 = st.columns(2)
         with col1:
-            cuit = st.text_input("CUIT (Ej: 30-11111111-1)")
-            
+            cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'])
         with col2:
-            st.info("Ingresa el CUIT y los datos se autocompletarán si presionas 'Buscar en AFIP'. (A implementarse)")
+            nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
             
-        st.divider()
-        
-        # Datos Autocompletados (simulados por ahora - habilitados para carga manual)
-        nombre = st.text_input("NOMBRE (Razón Social)", disabled=False)
-        domicilio_f = st.text_input("Domicilio Fiscal", disabled=False)
-        domicilio_e = st.text_input("Domicilio Entrega", disabled=False)
+        domicilio_f = st.text_input("Domicilio Fiscal", value=st.session_state['afip_data']['domicilio_f'])
+        domicilio_e = st.text_input("Domicilio Entrega")
         
         col_loc, col_cp, col_pais = st.columns(3)
         with col_loc:
-            localidad = st.text_input("LOCALIDAD", disabled=False)
+            localidad = st.text_input("LOCALIDAD")
         with col_cp:
-            c_postal = st.text_input("Código Postal", disabled=False)
+            c_postal = st.text_input("Código Postal")
         with col_pais:
-            pais = st.text_input("País", disabled=False)
+            pais = st.text_input("País", value="Argentina")
         
         st.subheader("Datos Complementarios")
         n_fantasia = st.text_input("Nombre Fantasia")
@@ -74,5 +107,10 @@ def render_vendedor_dashboard():
                     }
                     response = supabase.table('clientes_pendientes').insert(data).execute()
                     st.success("¡Cliente guardado exitosamente y en espera de validación!")
+                    # Limpiar estado
+                    st.session_state['afip_data'] = {
+                        "cuit": "", "nombre": "", "domicilio_f": "", 
+                        "localidad": "", "provincia": "", "cp": "", "estado": ""
+                    }
                 except Exception as e:
                     st.error(f"Error al guardar el cliente: {e}")
