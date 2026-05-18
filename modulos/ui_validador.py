@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from modulos.generador_dbi import generar_archivo_dbi
 from modulos.db import supabase
+from modulos.api_nosis import consultar_nosis
 
 MAP_TIPO_RESP = {
     "1.0": "Resp. Inscripto",
@@ -61,6 +62,47 @@ def render_validador_dashboard():
             client_data = df.iloc[selected_index]
             
             st.markdown(f"### 📋 Detalle del Cliente: {client_data.get('nombre', '')}")
+            
+            # --- SECCIÓN NOSIS ---
+            st.markdown("#### 🛡️ Análisis de Riesgo Crediticio (Nosis)")
+            user_id = st.session_state.get('user_id', None)
+            with st.spinner("Ejecutando Motor de Reglas Corporativo..."):
+                nosis_data = consultar_y_evaluar_nosis(client_data.get('cuit', ''), user_id)
+            
+            if 'error' in nosis_data:
+                st.warning(nosis_data['error'])
+            else:
+                dictamen = nosis_data.get('dictamen', '')
+                st.caption(f"Fuente de datos: {nosis_data.get('origen', '')}")
+                
+                if dictamen == "RECHAZO AUTOMÁTICO":
+                    st.error(f"### 🛑 DICTAMEN: {dictamen}")
+                    st.markdown("Se sugiere **bloquear** la cuenta o solicitar garantías adicionales.")
+                elif dictamen == "REVISIÓN GERENCIAL":
+                    st.warning(f"### ⚠️ DICTAMEN: {dictamen}")
+                    st.markdown("El cliente presenta alertas amarillas. Requiere supervisión manual.")
+                else:
+                    st.success(f"### ✅ DICTAMEN: {dictamen}")
+                    st.markdown("Perfil crediticio óptimo. Vía libre para operar.")
+                
+                payload = nosis_data.get('payload_crudo', {})
+                semaforos = nosis_data.get('semaforos', {})
+                
+                # Función auxiliar para pintar semaforos
+                def pinta_semaforo(color):
+                    if color == "VERDE": return "🟢"
+                    if color == "AMARILLO": return "🟡"
+                    return "🔴"
+                    
+                col_n1, col_n2, col_n3, col_n4, col_n5 = st.columns(5)
+                col_n1.metric(f"{pinta_semaforo(semaforos.get('score'))} Score", payload.get('score_riesgo'))
+                col_n2.metric(f"{pinta_semaforo(semaforos.get('bcra'))} BCRA", payload.get('calificacion_bcra'))
+                col_n3.metric(f"{pinta_semaforo(semaforos.get('cheques'))} Cheques", payload.get('cheques_rechazados'))
+                col_n4.metric(f"{pinta_semaforo(semaforos.get('juicios'))} Juicios", payload.get('juicios_concursos'))
+                col_n5.metric(f"{pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get('baches_afip_meses'))
+                
+            st.divider()
+            # ----------------------
             
             # Toggle para habilitar edición de campos manuales
             edit_mode = st.toggle("Habilitar modificación de datos manuales", value=False)
