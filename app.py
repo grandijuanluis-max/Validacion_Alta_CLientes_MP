@@ -10,6 +10,8 @@ st.set_page_config(
 from modulos.auth import login_form, logout
 from modulos.ui_vendedor import render_vendedor_dashboard
 from modulos.ui_validador import render_validador_dashboard
+from modulos.ui_exportados import render_exportados_dashboard
+from modulos.ui_usuarios import render_usuarios_dashboard
 
 def main():
     if 'logged_in' not in st.session_state:
@@ -18,7 +20,7 @@ def main():
 
     if not st.session_state['logged_in']:
         st.title("💼 MP - Alta Rápida de Clientes")
-        st.caption("🟢 Versión 1.1 - Sistema de Login Habilitado")
+        st.caption("🟢 Versión 1.2 - Sistema de Permisos y Workflow Avanzado")
         login_form()
     else:
         # Sidebar layout for logged-in users
@@ -34,6 +36,10 @@ def main():
                 menu_options.append("Alta de Clientes")
             if st.session_state.get('permiso_validacion', False):
                 menu_options.append("Validar Clientes")
+            if st.session_state.get('permiso_exportados', False):
+                menu_options.append("Clientes Exportados")
+            if st.session_state.get('permiso_usuarios', False):
+                menu_options.append("Permisos de Usuarios")
                 
             if not menu_options:
                 st.warning("No tienes permisos asignados a ninguna sección.")
@@ -50,6 +56,10 @@ def main():
             render_vendedor_dashboard()
         elif seleccion == "Validar Clientes":
             render_validador_dashboard()
+        elif seleccion == "Clientes Exportados":
+            render_exportados_dashboard()
+        elif seleccion == "Permisos de Usuarios":
+            render_usuarios_dashboard()
 
 if __name__ == "__main__":
     main()
