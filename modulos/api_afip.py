@@ -217,7 +217,14 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             "domicilio_fiscal": "",
             "localidad": "",
             "provincia": "",
-            "condicion_iva": "Exento / Monotributo"
+            "tipo_doc_desc": "",
+            "tipo_doc_codigo": "",
+            "tipo_resp_desc": "",
+            "tipo_resp_codigo": "",
+            "actividad": "",
+            "cod_acti": "",
+            "antiguedad": "",
+            "mes_cierre": ""
         }
         
         razon_social = get_text(persona, 'razonSocial')
@@ -232,6 +239,26 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
         estado_clave = get_text(persona, 'estadoClave')
         if estado_clave == "ACTIVO":
             datos["estado"] = "Activo"
+            
+        tipo_clave = get_text(persona, 'tipoClave')
+        if tipo_clave in ["CUIT", "CUIL"]:
+            datos["tipo_doc_desc"] = tipo_clave
+            datos["tipo_doc_codigo"] = "80"
+            
+        actividad_principal = get_text(persona, 'descripcionActividadPrincipal')
+        id_actividad = get_text(persona, 'idActividadPrincipal')
+        datos["actividad"] = actividad_principal if actividad_principal else ""
+        datos["cod_acti"] = id_actividad if id_actividad else ""
+        
+        fecha_inscripcion = get_text(persona, 'fechaInscripcion')
+        fecha_contrato = get_text(persona, 'fechaContratoSocial')
+        # Utilizamos fechaContratoSocial si existe, si no fechaInscripcion
+        datos["antiguedad"] = fecha_contrato if fecha_contrato else (fecha_inscripcion if fecha_inscripcion else "")
+        if datos["antiguedad"] and "T" in datos["antiguedad"]:
+            datos["antiguedad"] = datos["antiguedad"].split("T")[0]
+            
+        mes_cierre = get_text(persona, 'mesCierre')
+        datos["mes_cierre"] = mes_cierre if mes_cierre else ""
             
         domicilio = get_node(persona, 'domicilio')
         if domicilio is not None:
@@ -248,8 +275,15 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             if 'impuesto' in imp.tag:
                 id_imp = get_text(imp, 'idImpuesto')
                 if id_imp == '30':
-                    datos["condicion_iva"] = "Responsable Inscripto"
+                    datos["tipo_resp_desc"] = "Responsable Inscripto"
+                    datos["tipo_resp_codigo"] = "1.0"
                     break
+                elif id_imp == '32':
+                    datos["tipo_resp_desc"] = "Exento"
+                    datos["tipo_resp_codigo"] = "4.0"
+                elif id_imp == '20':
+                    datos["tipo_resp_desc"] = "Monotributista"
+                    datos["tipo_resp_codigo"] = "3.0"
                 
         return datos
 

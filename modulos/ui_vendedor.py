@@ -45,7 +45,11 @@ def render_vendedor_dashboard():
     if 'afip_data' not in st.session_state:
         st.session_state['afip_data'] = {
             "cuit": "", "nombre": "", "domicilio_f": "", 
-            "localidad": "", "provincia": "", "cp": "", "estado": ""
+            "localidad": "", "provincia": "", "cp": "", "estado": "",
+            "tipo_doc_desc": "", "tipo_doc_codigo": "",
+            "tipo_resp_desc": "", "tipo_resp_codigo": "",
+            "actividad": "", "cod_acti": "",
+            "antiguedad": "", "mes_cierre": ""
         }
 
     # PASO 1: Selector / Buscador
@@ -78,6 +82,14 @@ def render_vendedor_dashboard():
                                 st.session_state['afip_data']['localidad'] = resultado.get('localidad', '')
                                 st.session_state['afip_data']['provincia'] = resultado.get('provincia', '')
                                 st.session_state['afip_data']['estado'] = resultado.get('estado', '')
+                                st.session_state['afip_data']['tipo_doc_desc'] = resultado.get('tipo_doc_desc', '')
+                                st.session_state['afip_data']['tipo_doc_codigo'] = resultado.get('tipo_doc_codigo', '')
+                                st.session_state['afip_data']['tipo_resp_desc'] = resultado.get('tipo_resp_desc', '')
+                                st.session_state['afip_data']['tipo_resp_codigo'] = resultado.get('tipo_resp_codigo', '')
+                                st.session_state['afip_data']['actividad'] = resultado.get('actividad', '')
+                                st.session_state['afip_data']['cod_acti'] = resultado.get('cod_acti', '')
+                                st.session_state['afip_data']['antiguedad'] = resultado.get('antiguedad', '')
+                                st.session_state['afip_data']['mes_cierre'] = resultado.get('mes_cierre', '')
                                 st.session_state['modo_carga'] = 'afip'
                                 st.rerun()
                         except Exception as e:
@@ -110,6 +122,25 @@ def render_vendedor_dashboard():
             cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'])
         with col2:
             nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
+            
+        st.markdown("##### Información Impositiva (AFIP)")
+        col_tdoc, col_tresp, col_acti = st.columns(3)
+        with col_tdoc:
+            st.text_input("Tipo Documento", value=st.session_state['afip_data'].get('tipo_doc_desc', ''), disabled=True)
+        with col_tresp:
+            st.text_input("Tipo Responsable", value=st.session_state['afip_data'].get('tipo_resp_desc', ''), disabled=True)
+        with col_acti:
+            st.text_input("Actividad Principal", value=st.session_state['afip_data'].get('actividad', ''), disabled=True)
+            
+        col_cacti, col_ant, col_mes = st.columns(3)
+        with col_cacti:
+            st.text_input("Código Actividad", value=st.session_state['afip_data'].get('cod_acti', ''), disabled=True)
+        with col_ant:
+            st.text_input("Antigüedad (Fecha)", value=st.session_state['afip_data'].get('antiguedad', ''), disabled=True)
+        with col_mes:
+            st.text_input("Mes Cierre", value=st.session_state['afip_data'].get('mes_cierre', ''), disabled=True)
+            
+        st.markdown("##### Domicilio y Contacto")
             
         domicilio_f = st.text_input("Domicilio Fiscal *", value=st.session_state['afip_data']['domicilio_f'])
         domicilio_e = st.text_input("Domicilio Entrega *", value=st.session_state['afip_data']['domicilio_f'])
@@ -182,14 +213,24 @@ def render_vendedor_dashboard():
                         "telefono": telefono.upper() if telefono else "",
                         "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
                         "creado_por": st.session_state.get('user_id'),
-                        "estado": "Pendiente"
+                        "estado": "Pendiente",
+                        "tipo_resp": st.session_state['afip_data'].get('tipo_resp_codigo', ''),
+                        "tipo_doc": st.session_state['afip_data'].get('tipo_doc_codigo', ''),
+                        "actividad": st.session_state['afip_data'].get('actividad', ''),
+                        "cod_acti": st.session_state['afip_data'].get('cod_acti', ''),
+                        "antiguedad": st.session_state['afip_data'].get('antiguedad', ''),
+                        "mes_cierre": st.session_state['afip_data'].get('mes_cierre', '')
                     }
                     response = supabase.table('clientes_pendientes').insert(data).execute()
                     st.success("¡Cliente guardado exitosamente y en espera de validación!")
                     # Limpiar estado para el próximo cliente
                     st.session_state['afip_data'] = {
                         "cuit": "", "nombre": "", "domicilio_f": "", 
-                        "localidad": "", "provincia": "", "cp": "", "estado": ""
+                        "localidad": "", "provincia": "", "cp": "", "estado": "",
+                        "tipo_doc_desc": "", "tipo_doc_codigo": "",
+                        "tipo_resp_desc": "", "tipo_resp_codigo": "",
+                        "actividad": "", "cod_acti": "",
+                        "antiguedad": "", "mes_cierre": ""
                     }
                     st.session_state['modo_carga'] = None
                     st.rerun()
