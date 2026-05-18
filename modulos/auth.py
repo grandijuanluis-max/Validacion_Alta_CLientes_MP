@@ -32,6 +32,8 @@ def check_login():
                 # Nuevos Permisos Dinámicos
                 st.session_state['permiso_alta'] = user.get('permiso_alta', False)
                 st.session_state['permiso_validacion'] = user.get('permiso_validacion', False)
+                st.session_state['permiso_exportados'] = user.get('permiso_exportados', False)
+                st.session_state['permiso_usuarios'] = user.get('permiso_usuarios', False)
                 
                 st.session_state['login_error'] = None
             else:
@@ -53,7 +55,9 @@ def login_form():
         st.error(st.session_state['login_error'])
 
 def logout():
-    for key in ['logged_in', 'role', 'user_id', 'user_email', 'codigo_vendedor', 'permiso_alta', 'permiso_validacion']:
+    keys_to_clear = ['logged_in', 'role', 'user_id', 'user_email', 'codigo_vendedor', 
+                     'permiso_alta', 'permiso_validacion', 'permiso_exportados', 'permiso_usuarios']
+    for key in keys_to_clear:
         if key in st.session_state:
             del st.session_state[key]
     st.rerun()
