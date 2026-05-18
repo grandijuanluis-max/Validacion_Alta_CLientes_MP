@@ -123,6 +123,8 @@ def render_vendedor_dashboard():
         with col2:
             nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
             
+        n_fantasia = st.text_input("Nombre Fantasía *", value=st.session_state['afip_data']['nombre'])
+            
         is_afip = (st.session_state['modo_carga'] == 'afip')
         
         st.markdown("##### Información Impositiva (AFIP)")
@@ -164,7 +166,20 @@ def render_vendedor_dashboard():
             val_mes = st.session_state['afip_data'].get('mes_cierre', '')
             mes_input = st.text_input("Mes Cierre", value=val_mes, disabled=(is_afip and bool(val_mes)))
             
-        st.markdown("##### Domicilio Fiscal")
+        st.markdown("##### Datos Comerciales y Societarios")
+        
+        ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
+        giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles)
+        
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            cuit_socio1 = st.text_input("CUIT Socio 1 (Opcional)")
+        with col_s2:
+            cuit_socio2 = st.text_input("CUIT Socio 2 (Opcional)")
+            
+        st.markdown("##### Domicilios y Contactos")
+        
+        st.markdown("**Domicilio Fiscal**")
             
         domicilio_f = st.text_input("Domicilio Fiscal *", value=st.session_state['afip_data']['domicilio_f'], disabled=is_afip)
         
@@ -214,20 +229,13 @@ def render_vendedor_dashboard():
                 
         with col_paise:
             pais_en = st.text_input("País Entrega *", value="ARGENTINA")
-        
-        st.subheader("Datos Complementarios")
-        n_fantasia = st.text_input("Nombre Fantasia *", value=st.session_state['afip_data']['nombre'])
-        contacto = st.text_input("Persona de Contacto *")
-        telefono = st.text_input("Telefono de contacto *")
-        
-        col_s1, col_s2 = st.columns(2)
-        with col_s1:
-            cuit_socio1 = st.text_input("CUIT Socio 1 (Opcional)")
-        with col_s2:
-            cuit_socio2 = st.text_input("CUIT Socio 2 (Opcional)")
-        
-        ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
-        giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles)
+            
+        st.markdown("**Personas de Contacto**")
+        col_cont, col_tel = st.columns(2)
+        with col_cont:
+            contacto = st.text_input("Persona de Contacto *")
+        with col_tel:
+            telefono = st.text_input("Teléfono de Contacto *")
         
         submit = st.button("Guardar y Enviar a Validación", type="primary", use_container_width=True)
         
