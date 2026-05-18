@@ -123,46 +123,70 @@ def render_vendedor_dashboard():
         with col2:
             nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
             
+        is_afip = (st.session_state['modo_carga'] == 'afip')
+        
         st.markdown("##### Información Impositiva (AFIP)")
-        col_tdoc, col_tresp, col_acti = st.columns(3)
+        
+        col_tdoc, col_tresp = st.columns(2)
         with col_tdoc:
-            st.text_input("Tipo Documento", value=st.session_state['afip_data'].get('tipo_doc_desc', ''), disabled=True)
+            val_tdoc = st.session_state['afip_data'].get('tipo_doc_desc', '')
+            if is_afip and val_tdoc:
+                st.text_input("Tipo Documento", value=val_tdoc, disabled=True)
+                tdoc_sel = val_tdoc
+            else:
+                opciones_tdoc = ["CUIT", "CUIL", "CDI"]
+                idx_tdoc = opciones_tdoc.index(val_tdoc) if val_tdoc in opciones_tdoc else 0
+                tdoc_sel = st.selectbox("Tipo Documento *", opciones_tdoc, index=idx_tdoc)
+                
         with col_tresp:
-            st.text_input("Tipo Responsable", value=st.session_state['afip_data'].get('tipo_resp_desc', ''), disabled=True)
-        with col_acti:
-            st.text_input("Actividad Principal", value=st.session_state['afip_data'].get('actividad', ''), disabled=True)
+            val_tresp = st.session_state['afip_data'].get('tipo_resp_desc', '')
+            if is_afip and val_tresp:
+                st.text_input("Tipo Responsable", value=val_tresp, disabled=True)
+                tresp_sel = val_tresp
+            else:
+                opciones_resp = ["Seleccionar...", "Responsable Inscripto", "Monotributista", "Exento"]
+                idx_resp = opciones_resp.index(val_tresp) if val_tresp in opciones_resp else 0
+                tresp_sel = st.selectbox("Tipo Responsable *", opciones_resp, index=idx_resp)
+                if is_afip and not val_tresp:
+                    st.caption("⚠️ AFIP no devolvió impuestos. Por favor, selecciona manualmente.")
+                    
+        val_acti = st.session_state['afip_data'].get('actividad', '')
+        acti_input = st.text_input("Actividad Principal", value=val_acti, disabled=(is_afip and bool(val_acti)))
             
         col_cacti, col_ant, col_mes = st.columns(3)
         with col_cacti:
-            st.text_input("Código Actividad", value=st.session_state['afip_data'].get('cod_acti', ''), disabled=True)
+            val_codacti = st.session_state['afip_data'].get('cod_acti', '')
+            codacti_input = st.text_input("Código Actividad", value=val_codacti, disabled=(is_afip and bool(val_codacti)))
         with col_ant:
-            st.text_input("Antigüedad (Fecha)", value=st.session_state['afip_data'].get('antiguedad', ''), disabled=True)
+            val_ant = st.session_state['afip_data'].get('antiguedad', '')
+            ant_input = st.text_input("Antigüedad (Fecha)", value=val_ant, disabled=(is_afip and bool(val_ant)))
         with col_mes:
-            st.text_input("Mes Cierre", value=st.session_state['afip_data'].get('mes_cierre', ''), disabled=True)
+            val_mes = st.session_state['afip_data'].get('mes_cierre', '')
+            mes_input = st.text_input("Mes Cierre", value=val_mes, disabled=(is_afip and bool(val_mes)))
             
         st.markdown("##### Domicilio y Contacto")
             
-        domicilio_f = st.text_input("Domicilio Fiscal *", value=st.session_state['afip_data']['domicilio_f'])
+        domicilio_f = st.text_input("Domicilio Fiscal *", value=st.session_state['afip_data']['domicilio_f'], disabled=is_afip)
         domicilio_e = st.text_input("Domicilio Entrega *", value=st.session_state['afip_data']['domicilio_f'])
         
         col_cp, col_loc, col_prov, col_pais = st.columns(4)
         
         with col_loc:
-            localidad = st.text_input("LOCALIDAD *", value=st.session_state['afip_data'].get('localidad', ''))
+            localidad = st.text_input("LOCALIDAD *", value=st.session_state['afip_data'].get('localidad', ''), disabled=is_afip)
         with col_prov:
-            provincia = st.text_input("Provincia *", value=st.session_state['afip_data'].get('provincia', ''))
+            provincia = st.text_input("Provincia *", value=st.session_state['afip_data'].get('provincia', ''), disabled=is_afip)
             
         # Reactividad en tiempo real: Se evalúan los valores tipeados en el momento
         cp_matches = buscar_cp(localidad, provincia)
         
         with col_cp:
             if len(cp_matches) == 1:
-                c_postal = st.text_input("Código Postal *", value=cp_matches[0], help="Autocompletado desde Base de Datos")
+                c_postal = st.text_input("Código Postal *", value=cp_matches[0], help="Autocompletado desde Base de Datos", disabled=is_afip)
             elif len(cp_matches) > 1:
-                c_postal = st.selectbox("Código Postal *", cp_matches, help="Múltiples opciones encontradas en la Base de Datos")
+                c_postal = st.selectbox("Código Postal *", cp_matches, help="Múltiples opciones encontradas en la Base de Datos", disabled=is_afip)
             else:
-                c_postal = st.text_input("Código Postal *", help="No encontrado en Base de Datos. Ingresa manualmente.")
-                st.warning("⚠️ Localidad no encontrada. Ingresa el CP a mano.")
+                c_postal = st.text_input("Código Postal *", help="No encontrado en Base de Datos. Ingresa manualmente.", disabled=is_afip)
+                if not is_afip: st.warning("⚠️ Localidad no encontrada. Ingresa el CP a mano.")
                 
         with col_pais:
             pais = st.text_input("País *", value="ARGENTINA")
@@ -193,12 +217,20 @@ def render_vendedor_dashboard():
             if not telefono.strip(): faltantes.append("Teléfono de Contacto")
             if giro_comercial == "Seleccione un ramo...": faltantes.append("Giro Comercial (Rubro)")
             
+            if tresp_sel == "Seleccionar...": faltantes.append("Tipo Responsable")
+            
             if faltantes:
                 st.error(f"❌ Error: Faltan completar los siguientes campos obligatorios: {', '.join(faltantes)}")
             elif supabase is None:
                 st.error("No hay conexión a la base de datos configurada.")
             else:
                 try:
+                    mapa_tdoc = {"CUIT": "80", "CUIL": "80", "CDI": "87"}
+                    mapa_resp = {"Responsable Inscripto": "1.0", "Monotributista": "3.0", "Exento": "4.0", "Seleccionar...": ""}
+                    
+                    codigo_tdoc = st.session_state['afip_data'].get('tipo_doc_codigo', '') if (is_afip and val_tdoc) else mapa_tdoc.get(tdoc_sel, "80")
+                    codigo_resp = st.session_state['afip_data'].get('tipo_resp_codigo', '') if (is_afip and val_tresp) else mapa_resp.get(tresp_sel, "")
+                    
                     data = {
                         "cuit": cuit.upper() if cuit else "",
                         "nombre": nombre.upper() if nombre else "",
@@ -214,12 +246,12 @@ def render_vendedor_dashboard():
                         "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
                         "creado_por": st.session_state.get('user_id'),
                         "estado": "Pendiente",
-                        "tipo_resp": st.session_state['afip_data'].get('tipo_resp_codigo', ''),
-                        "tipo_doc": st.session_state['afip_data'].get('tipo_doc_codigo', ''),
-                        "actividad": st.session_state['afip_data'].get('actividad', ''),
-                        "cod_acti": st.session_state['afip_data'].get('cod_acti', ''),
-                        "antiguedad": st.session_state['afip_data'].get('antiguedad', ''),
-                        "mes_cierre": st.session_state['afip_data'].get('mes_cierre', '')
+                        "tipo_resp": codigo_resp,
+                        "tipo_doc": codigo_tdoc,
+                        "actividad": acti_input,
+                        "cod_acti": codacti_input,
+                        "antiguedad": ant_input,
+                        "mes_cierre": mes_input
                     }
                     response = supabase.table('clientes_pendientes').insert(data).execute()
                     st.success("¡Cliente guardado exitosamente y en espera de validación!")
