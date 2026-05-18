@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from modulos.generador_dbi import generar_archivo_dbi
 from modulos.db import supabase
-from modulos.api_nosis import consultar_nosis
+from modulos.api_nosis import consultar_y_evaluar_nosis
 
 MAP_TIPO_RESP = {
     "1.0": "Resp. Inscripto",
