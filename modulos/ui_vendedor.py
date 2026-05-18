@@ -164,37 +164,67 @@ def render_vendedor_dashboard():
             val_mes = st.session_state['afip_data'].get('mes_cierre', '')
             mes_input = st.text_input("Mes Cierre", value=val_mes, disabled=(is_afip and bool(val_mes)))
             
-        st.markdown("##### Domicilio y Contacto")
+        st.markdown("##### Domicilio Fiscal")
             
         domicilio_f = st.text_input("Domicilio Fiscal *", value=st.session_state['afip_data']['domicilio_f'], disabled=is_afip)
-        domicilio_e = st.text_input("Domicilio Entrega *", value=st.session_state['afip_data']['domicilio_f'])
         
         col_cp, col_loc, col_prov, col_pais = st.columns(4)
         
         with col_loc:
-            localidad = st.text_input("LOCALIDAD *", value=st.session_state['afip_data'].get('localidad', ''), disabled=is_afip)
+            localidad = st.text_input("Localidad Fiscal *", value=st.session_state['afip_data'].get('localidad', ''), disabled=is_afip)
         with col_prov:
-            provincia = st.text_input("Provincia *", value=st.session_state['afip_data'].get('provincia', ''), disabled=is_afip)
+            provincia = st.text_input("Provincia Fiscal *", value=st.session_state['afip_data'].get('provincia', ''), disabled=is_afip)
             
         # Reactividad en tiempo real: Se evalúan los valores tipeados en el momento
         cp_matches = buscar_cp(localidad, provincia)
         
         with col_cp:
             if len(cp_matches) == 1:
-                c_postal = st.text_input("Código Postal *", value=cp_matches[0], help="Autocompletado desde Base de Datos", disabled=is_afip)
+                c_postal = st.text_input("C.P. Fiscal *", value=cp_matches[0], help="Autocompletado desde Base de Datos", disabled=is_afip)
             elif len(cp_matches) > 1:
-                c_postal = st.selectbox("Código Postal *", cp_matches, help="Múltiples opciones encontradas en la Base de Datos", disabled=is_afip)
+                c_postal = st.selectbox("C.P. Fiscal *", cp_matches, help="Múltiples opciones encontradas en la Base de Datos", disabled=is_afip)
             else:
-                c_postal = st.text_input("Código Postal *", help="No encontrado en Base de Datos. Ingresa manualmente.", disabled=is_afip)
+                c_postal = st.text_input("C.P. Fiscal *", help="No encontrado en Base de Datos. Ingresa manualmente.", disabled=is_afip)
                 if not is_afip: st.warning("⚠️ Localidad no encontrada. Ingresa el CP a mano.")
                 
         with col_pais:
-            pais = st.text_input("País *", value="ARGENTINA")
+            pais = st.text_input("País Fiscal *", value="ARGENTINA", disabled=is_afip)
+            
+        st.markdown("##### Domicilio de Entrega")
+        
+        domicilio_e = st.text_input("Domicilio Entrega *", value=st.session_state['afip_data']['domicilio_f'])
+        
+        col_cpe, col_loce, col_prove, col_paise = st.columns(4)
+        
+        with col_loce:
+            local_en = st.text_input("Localidad Entrega *", value=st.session_state['afip_data'].get('localidad', ''))
+        with col_prove:
+            prov_en = st.text_input("Provincia Entrega *", value=st.session_state['afip_data'].get('provincia', ''))
+            
+        cp_matches_e = buscar_cp(local_en, prov_en)
+        
+        with col_cpe:
+            if len(cp_matches_e) == 1:
+                cp_en = st.text_input("C.P. Entrega *", value=cp_matches_e[0])
+            elif len(cp_matches_e) > 1:
+                cp_en = st.selectbox("C.P. Entrega *", cp_matches_e)
+            else:
+                # Copiar el CP fiscal como valor por defecto si no se encuentra autocompletado
+                cp_en = st.text_input("C.P. Entrega *", value=str(c_postal) if c_postal else "")
+                
+        with col_paise:
+            pais_en = st.text_input("País Entrega *", value="ARGENTINA")
         
         st.subheader("Datos Complementarios")
         n_fantasia = st.text_input("Nombre Fantasia *", value=st.session_state['afip_data']['nombre'])
         contacto = st.text_input("Persona de Contacto *")
         telefono = st.text_input("Telefono de contacto *")
+        
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            cuit_socio1 = st.text_input("CUIT Socio 1 (Opcional)")
+        with col_s2:
+            cuit_socio2 = st.text_input("CUIT Socio 2 (Opcional)")
         
         ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
         giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles)
@@ -207,11 +237,14 @@ def render_vendedor_dashboard():
             if not cuit.strip(): faltantes.append("CUIT")
             if not nombre.strip(): faltantes.append("NOMBRE (Razón Social)")
             if not domicilio_f.strip(): faltantes.append("Domicilio Fiscal")
+            if not localidad.strip(): faltantes.append("Localidad Fiscal")
+            if not provincia.strip(): faltantes.append("Provincia Fiscal")
+            if not str(c_postal).strip(): faltantes.append("C.P. Fiscal")
+            
             if not domicilio_e.strip(): faltantes.append("Domicilio Entrega")
-            if not localidad.strip(): faltantes.append("LOCALIDAD")
-            if not provincia.strip(): faltantes.append("Provincia")
-            if not str(c_postal).strip(): faltantes.append("Código Postal")
-            if not pais.strip(): faltantes.append("País")
+            if not local_en.strip(): faltantes.append("Localidad Entrega")
+            if not prov_en.strip(): faltantes.append("Provincia Entrega")
+            if not str(cp_en).strip(): faltantes.append("C.P. Entrega")
             if not n_fantasia.strip(): faltantes.append("Nombre Fantasía")
             if not contacto.strip(): faltantes.append("Persona de Contacto")
             if not telefono.strip(): faltantes.append("Teléfono de Contacto")
@@ -241,8 +274,13 @@ def render_vendedor_dashboard():
                         "provincia": provincia.upper() if provincia else "",
                         "c_postal": str(c_postal).upper() if c_postal else "",
                         "pais": pais.upper() if pais else "",
+                        "local_en": local_en.upper() if local_en else "",
+                        "prov_en": prov_en.upper() if prov_en else "",
+                        "cp_en": str(cp_en).upper() if cp_en else "",
                         "contacto": contacto.upper() if contacto else "",
                         "telefono": telefono.upper() if telefono else "",
+                        "cuit_socio1": cuit_socio1.replace('-', '').strip() if cuit_socio1 else "",
+                        "cuit_socio2": cuit_socio2.replace('-', '').strip() if cuit_socio2 else "",
                         "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
                         "creado_por": st.session_state.get('user_id'),
                         "estado": "Pendiente",
