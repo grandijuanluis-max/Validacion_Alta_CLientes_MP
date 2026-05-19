@@ -14,6 +14,24 @@ MAP_TIPO_RESP = {
 def render_validador_dashboard():
     st.header("✅ Validación de Clientes")
     
+    # Manejar estado de descarga
+    if 'archivo_exportado' in st.session_state:
+        import os
+        if os.path.exists(st.session_state['archivo_exportado']):
+            st.success("¡Exportación completada exitosamente! El archivo está listo para descargar.")
+            with open(st.session_state['archivo_exportado'], "rb") as f:
+                st.download_button(
+                    label="⬇️ Descargar Clientes_web.dbi",
+                    data=f,
+                    file_name="Clientes_web.dbi",
+                    mime="application/octet-stream",
+                    type="primary"
+                )
+            if st.button("Cerrar este mensaje"):
+                del st.session_state['archivo_exportado']
+                st.rerun()
+            st.divider()
+            
     st.write("A continuación se listan los clientes cargados por los vendedores que esperan validación o exportación.")
     
     if supabase is None:
@@ -221,8 +239,7 @@ def render_validador_dashboard():
                 else:
                     supabase.table('secuencia_codigo').insert({'id': 1, 'ultimo_valor': ultimo_asignado}).execute()
                     
-                st.success(f"¡Archivo generado con éxito! Clientes exportados correctamente.")
-                st.info(f"Se generaron códigos correlativos desde el {numero_inicio} hasta el {ultimo_asignado}.")
+                st.session_state['archivo_exportado'] = ruta_salida
                 st.rerun()
             
     except Exception as e:

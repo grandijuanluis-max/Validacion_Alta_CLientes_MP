@@ -4,19 +4,22 @@ import dbf
 
 def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
     """
-    Genera un archivo .dbi nativo de dBASE utilizando la librería dbf.
-    El DataFrame debe contener clientes validados listos para exportar.
+    Genera un archivo .dbi nativo de dBASE utilizando la librería dbf con el layout de Presea.
     """
-    # Esquema exacto de Presea + Nuevo campo DOMICILIOE
-    # N(15,0) = Numérico de 15, C(30) = Texto de 30.
     schema_str = (
-        "CODIGO N(15,0); CUIT N(15,0); NOMBRE C(30); N_FANTASIA C(30); "
-        "DOMICILIO C(50); DOMICILIOE C(50); LOCALIDAD C(35); C_POSTAL C(5); "
-        "PAIS C(15); CONTACTO C(30); TELEFONO C(40); RUBRO C(30); VENDEDOR N(15,0)"
+        "CODIGO N(6,0); NOMBRE C(30); N_FANTASIA C(30); CUIT N(12,0); "
+        "DOMICILIO C(50); LOCALIDAD C(35); C_POSTAL C(50); PROVINCIA C(25); "
+        "PAIS C(20); CONTACTO C(30); TELEFONO C(40); RUBRO C(30); "
+        "TIPO_RESP N(5,1); TIPO_DOC N(2,0); CUIT_S1 N(12,0); CUIT_S2 N(12,0); "
+        "MEMO C(210)"
     )
     
     os.makedirs("data", exist_ok=True)
-    ruta_salida = os.path.join("data", f"clientes_exportar_{datetime.datetime.now().strftime('%Y%m%d%H%M')}.dbi")
+    ruta_salida = os.path.join("data", "Clientes_web.dbi")
+    
+    # Si el archivo existe, lo pisamos o lo re-creamos para limpiar datos anteriores
+    if os.path.exists(ruta_salida):
+        os.remove(ruta_salida)
     
     table = dbf.Table(ruta_salida, schema_str, dbf_type='db3', codepage='cp1252')
     table.open(mode=dbf.READ_WRITE)
@@ -24,30 +27,44 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
     codigo_actual = numero_inicio_codigo
     
     for index, row in dataframe_clientes.iterrows():
-        # Limpieza de CUIT a numérico
+        # Limpieza de numéricos (CUITs)
         cuit_num = str(row.get('cuit', '0')).replace('-', '').replace(' ', '')
         if not cuit_num.isdigit(): cuit_num = 0
         else: cuit_num = int(cuit_num)
-            
-        codigo_vendedor = 0
-        try: codigo_vendedor = int(row.get('codigo_vendedor', 0))
-        except: pass
         
-        # Armamos la tupla respetando el orden del schema
+        cuit_s1_num = str(row.get('cuit_socio1', '0')).replace('-', '').replace(' ', '')
+        if not cuit_s1_num.isdigit() or cuit_s1_num == '': cuit_s1_num = 0
+        else: cuit_s1_num = int(cuit_s1_num)
+        
+        cuit_s2_num = str(row.get('cuit_socio2', '0')).replace('-', '').replace(' ', '')
+        if not cuit_s2_num.isdigit() or cuit_s2_num == '': cuit_s2_num = 0
+        else: cuit_s2_num = int(cuit_s2_num)
+        
+        # Limpieza TIPO_RESP y TIPO_DOC
+        try: tipo_resp = float(row.get('tipo_resp', 0.0))
+        except: tipo_resp = 0.0
+            
+        try: tipo_doc = int(row.get('tipo_doc', 80))
+        except: tipo_doc = 80
+        
         registro = (
-            codigo_actual,                      # CODIGO
-            cuit_num,                           # CUIT
-            str(row.get('nombre', ''))[:30],      # NOMBRE
-            str(row.get('n_fantasia', ''))[:30],  # N_FANTASIA
-            str(row.get('domicilio_f', ''))[:50],   # DOMICILIO (Fiscal)
-            str(row.get('domicilio_e', ''))[:50],  # DOMICILIOE (Entrega)
-            str(row.get('localidad', ''))[:35],   # LOCALIDAD
-            str(row.get('c_postal', ''))[:5],     # C_POSTAL
-            str(row.get('pais', ''))[:15],        # PAIS
-            str(row.get('contacto', ''))[:30],    # CONTACTO
-            str(row.get('telefono', ''))[:40],    # TELEFONO
-            str(row.get('giro_comercial', ''))[:30],       # RUBRO (Giro Comercial)
-            codigo_vendedor                     # VENDEDOR
+            codigo_actual,                            # CODIGO N(6,0)
+            str(row.get('nombre', ''))[:30],            # NOMBRE C(30)
+            str(row.get('n_fantasia', ''))[:30],        # N_FANTASIA C(30)
+            cuit_num,                                 # CUIT N(12,0)
+            str(row.get('domicilio_f', ''))[:50],         # DOMICILIO C(50)
+            str(row.get('localidad', ''))[:35],         # LOCALIDAD C(35)
+            str(row.get('c_postal', ''))[:50],          # C_POSTAL C(50)
+            str(row.get('provincia', ''))[:25],         # PROVINCIA C(25)
+            str(row.get('pais', ''))[:20],              # PAIS C(20)
+            str(row.get('contacto', ''))[:30],          # CONTACTO C(30)
+            str(row.get('telefono', ''))[:40],          # TELEFONO C(40)
+            str(row.get('giro_comercial', ''))[:30],    # RUBRO C(30)
+            tipo_resp,                                # TIPO_RESP N(5,1)
+            tipo_doc,                                 # TIPO_DOC N(2,0)
+            cuit_s1_num,                              # CUIT_S1 N(12,0)
+            cuit_s2_num,                              # CUIT_S2 N(12,0)
+            str(row.get('documento', ''))[:210]         # MEMO C(210)
         )
         table.append(registro)
         codigo_actual += 1
