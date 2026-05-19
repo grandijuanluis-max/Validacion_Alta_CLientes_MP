@@ -139,11 +139,11 @@ def render_validador_dashboard():
             socio2 = col_s3.text_input("CUIT Socio 2", value=client_data.get('cuit_socio2', ''), disabled=not edit_mode)
             
             st.markdown("##### Domicilio Fiscal (AFIP)")
-            dom_f = st.text_input("Domicilio Fiscal", value=client_data.get('domicilio_f', ''), disabled=not edit_mode)
+            dom_f = st.text_input("Domicilio Fiscal", value=client_data.get('domicilio_f', ''), disabled=True)
             col_f1, col_f2, col_f3 = st.columns(3)
-            cp_f = col_f1.text_input("C.P. Fiscal", value=client_data.get('c_postal', ''), disabled=not edit_mode)
-            loc_f = col_f2.text_input("Localidad Fiscal", value=client_data.get('localidad', ''), disabled=not edit_mode)
-            prov_f = col_f3.text_input("Provincia Fiscal", value=client_data.get('provincia', ''), disabled=not edit_mode)
+            cp_f = col_f1.text_input("C.P. Fiscal", value=client_data.get('c_postal', ''), disabled=True)
+            loc_f = col_f2.text_input("Localidad Fiscal", value=client_data.get('localidad', ''), disabled=True)
+            prov_f = col_f3.text_input("Provincia Fiscal", value=client_data.get('provincia', ''), disabled=True)
 
             st.markdown("##### Domicilio de Entrega")
             dom_e = st.text_input("Domicilio Entrega", value=client_data.get('domicilio_e', ''), disabled=not edit_mode)
@@ -158,49 +158,39 @@ def render_validador_dashboard():
             telefono = col_c2.text_input("Teléfono", value=client_data.get('telefono', ''), disabled=not edit_mode)
             
             st.divider()
-            st.markdown("#### Ingreso de Datos del Validador")
             
             val_doc = client_data.get('documento', client_data.get('Documento', ''))
-            dato_adicional = st.text_input("Documento (Dato Adicional)", value=str(val_doc) if val_doc else "")
+            if val_doc:
+                st.markdown("#### Observaciones del Vendedor")
+                st.text_area("Aclaraciones para Alta Temprana", value=str(val_doc), disabled=True)
+                st.divider()
             
-            estado_actual = client_data.get('estado', 'Pendiente')
-            opciones_estado = ["Pendiente", "Modificado", "A Exportar", "Rechazado"]
-            idx_estado = opciones_estado.index(estado_actual) if estado_actual in opciones_estado else 0
-            nuevo_estado = st.selectbox("Estado del Cliente (Validación)", opciones_estado, index=idx_estado, help="Permite modificar manualmente la marca del Estado del cliente.")
+            st.markdown("#### Acciones de Validación")
             
             col_btn1, col_btn2 = st.columns(2)
             
             # Diccionario con los datos que se pueden actualizar
             datos_actualizados = {
-                'documento': dato_adicional,
                 'giro_comercial': giro,
                 'cuit_socio1': socio1,
                 'cuit_socio2': socio2,
-                'domicilio_f': dom_f,
-                'c_postal': cp_f,
-                'localidad': loc_f,
-                'provincia': prov_f,
                 'domicilio_e': dom_e,
                 'cp_ent': cp_e,
                 'local_ent': loc_e,
                 'prov_ent': prov_e,
                 'contacto': contacto,
-                'telefono': telefono,
-                'estado': nuevo_estado
+                'telefono': telefono
             }
             
             if col_btn1.button("Guardar Cambios Manuales", use_container_width=True):
-                # Si no tocó el estado pero apretó Guardar Cambios, y estaba Pendiente, pasa a Modificado
-                if estado_actual == 'Pendiente' and nuevo_estado == 'Pendiente':
-                    datos_actualizados['estado'] = 'Modificado'
-                    
-                supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', int(client_data['id'])).execute()
-                st.success(f"Datos guardados. Estado: {datos_actualizados['estado']}.")
+                datos_actualizados['estado'] = 'Modificado'
+                supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
+                st.success("Datos guardados. Estado cambiado a Modificado.")
                 st.rerun()
                 
             if col_btn2.button("Marcar para Exportar (Aprobado)", type="primary", use_container_width=True):
                 datos_actualizados['estado'] = 'A Exportar'
-                supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', int(client_data['id'])).execute()
+                supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
                 st.success(f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente.")
                 st.rerun()
                 

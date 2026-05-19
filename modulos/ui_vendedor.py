@@ -118,14 +118,14 @@ def render_vendedor_dashboard():
         st.subheader("Paso 2: Completar y Enviar")
         
         col1, col2 = st.columns(2)
+        is_afip = (st.session_state['modo_carga'] == 'afip')
+        
         with col1:
-            cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'])
+            cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'], disabled=is_afip)
         with col2:
-            nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'])
+            nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'], disabled=is_afip)
             
         n_fantasia = st.text_input("Nombre Fantasía *", value=st.session_state['afip_data']['nombre'])
-            
-        is_afip = (st.session_state['modo_carga'] == 'afip')
         
         st.markdown("##### Información Impositiva (AFIP)")
         
@@ -236,6 +236,8 @@ def render_vendedor_dashboard():
             contacto = st.text_input("Persona de Contacto *")
         with col_tel:
             telefono = st.text_input("Teléfono de Contacto *")
+            
+        observaciones = st.text_area("Observaciones para el Validador (Opcional)", help="Dato informativo o aclaratorio para tener en cuenta en el alta temprana.")
         
         submit = st.button("Guardar y Enviar a Validación", type="primary", use_container_width=True)
         
@@ -287,6 +289,7 @@ def render_vendedor_dashboard():
                         "cp_ent": str(cp_en).upper() if cp_en else "",
                         "contacto": contacto.upper() if contacto else "",
                         "telefono": telefono.upper() if telefono else "",
+                        "documento": observaciones,
                         "cuit_socio1": cuit_socio1.replace('-', '').strip() if cuit_socio1 else "",
                         "cuit_socio2": cuit_socio2.replace('-', '').strip() if cuit_socio2 else "",
                         "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
