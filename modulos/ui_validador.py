@@ -101,6 +101,15 @@ def render_validador_dashboard():
                 col_n4.metric(f"{pinta_semaforo(semaforos.get('juicios'))} Juicios", payload.get('juicios_concursos'))
                 col_n5.metric(f"{pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get('baches_afip_meses'))
                 
+                with st.expander("ℹ️ ¿Cómo leer estas mediciones? (Glosario Nosis)"):
+                    st.markdown("""
+                    *   **Score:** Puntaje estadístico que predice la probabilidad de pago. **>700** es Óptimo (Verde), **450-699** es Riesgo Medio (Amarillo), **<450** es Riesgo Alto (Rojo).
+                    *   **BCRA:** Situación en la Central de Deudores del Banco Central. **1** es Normal (Verde), **2** es Riesgo Potencial (Amarillo), **3, 4 y 5** indican riesgo alto/incobrable (Rojo).
+                    *   **Cheques:** Cantidad de cheques rechazados sin fondos en los últimos 24 meses.
+                    *   **Juicios:** Cantidad de juicios comerciales, ejecuciones fiscales o estado de concurso preventivo.
+                    *   **Deuda AFIP:** Meses de atraso detectados en el pago de cargas sociales (aportes patronales).
+                    """)
+                
             st.divider()
             # ----------------------
             
@@ -130,11 +139,11 @@ def render_validador_dashboard():
             socio2 = col_s3.text_input("CUIT Socio 2", value=client_data.get('cuit_socio2', ''), disabled=not edit_mode)
             
             st.markdown("##### Domicilio Fiscal (AFIP)")
-            st.text_input("Domicilio Fiscal", value=client_data.get('domicilio_f', ''), disabled=True)
+            dom_f = st.text_input("Domicilio Fiscal", value=client_data.get('domicilio_f', ''), disabled=not edit_mode)
             col_f1, col_f2, col_f3 = st.columns(3)
-            col_f1.text_input("C.P. Fiscal", value=client_data.get('c_postal', ''), disabled=True)
-            col_f2.text_input("Localidad Fiscal", value=client_data.get('localidad', ''), disabled=True)
-            col_f3.text_input("Provincia Fiscal", value=client_data.get('provincia', ''), disabled=True)
+            cp_f = col_f1.text_input("C.P. Fiscal", value=client_data.get('c_postal', ''), disabled=not edit_mode)
+            loc_f = col_f2.text_input("Localidad Fiscal", value=client_data.get('localidad', ''), disabled=not edit_mode)
+            prov_f = col_f3.text_input("Provincia Fiscal", value=client_data.get('provincia', ''), disabled=not edit_mode)
 
             st.markdown("##### Domicilio de Entrega")
             dom_e = st.text_input("Domicilio Entrega", value=client_data.get('domicilio_e', ''), disabled=not edit_mode)
@@ -154,6 +163,11 @@ def render_validador_dashboard():
             val_doc = client_data.get('documento', client_data.get('Documento', ''))
             dato_adicional = st.text_input("Documento (Dato Adicional)", value=str(val_doc) if val_doc else "")
             
+            estado_actual = client_data.get('estado', 'Pendiente')
+            opciones_estado = ["Pendiente", "Modificado", "A Exportar", "Rechazado"]
+            idx_estado = opciones_estado.index(estado_actual) if estado_actual in opciones_estado else 0
+            nuevo_estado = st.selectbox("Estado del Cliente (Validación)", opciones_estado, index=idx_estado, help="Permite modificar manualmente la marca del Estado del cliente.")
+            
             col_btn1, col_btn2 = st.columns(2)
             
             # Diccionario con los datos que se pueden actualizar
@@ -162,21 +176,29 @@ def render_validador_dashboard():
                 'giro_comercial': giro,
                 'cuit_socio1': socio1,
                 'cuit_socio2': socio2,
+                'domicilio_f': dom_f,
+                'c_postal': cp_f,
+                'localidad': loc_f,
+                'provincia': prov_f,
                 'domicilio_e': dom_e,
                 'cp_ent': cp_e,
                 'local_ent': loc_e,
                 'prov_ent': prov_e,
                 'contacto': contacto,
-                'telefono': telefono
+                'telefono': telefono,
+                'estado': nuevo_estado
             }
             
-            if col_btn1.button("Guardar para Seguir revisando", use_container_width=True):
-                datos_actualizados['estado'] = 'Modificado'
+            if col_btn1.button("Guardar Cambios Manuales", use_container_width=True):
+                # Si no tocó el estado pero apretó Guardar Cambios, y estaba Pendiente, pasa a Modificado
+                if estado_actual == 'Pendiente' and nuevo_estado == 'Pendiente':
+                    datos_actualizados['estado'] = 'Modificado'
+                    
                 supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', int(client_data['id'])).execute()
-                st.success(f"Datos guardados. Estado cambiado a Modificado.")
+                st.success(f"Datos guardados. Estado: {datos_actualizados['estado']}.")
                 st.rerun()
                 
-            if col_btn2.button("Marcar para Exportar", type="primary", use_container_width=True):
+            if col_btn2.button("Marcar para Exportar (Aprobado)", type="primary", use_container_width=True):
                 datos_actualizados['estado'] = 'A Exportar'
                 supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', int(client_data['id'])).execute()
                 st.success(f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente.")

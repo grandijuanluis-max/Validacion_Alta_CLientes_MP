@@ -186,20 +186,20 @@ def render_vendedor_dashboard():
         col_cp, col_loc, col_prov, col_pais = st.columns(4)
         
         with col_loc:
-            localidad = st.text_input("Localidad Fiscal *", value=st.session_state['afip_data'].get('localidad', ''), disabled=is_afip)
+            localidad = st.text_input("Localidad Fiscal *", value=st.session_state['afip_data'].get('localidad', ''))
         with col_prov:
-            provincia = st.text_input("Provincia Fiscal *", value=st.session_state['afip_data'].get('provincia', ''), disabled=is_afip)
+            provincia = st.text_input("Provincia Fiscal *", value=st.session_state['afip_data'].get('provincia', ''))
             
         # Reactividad en tiempo real: Se evalúan los valores tipeados en el momento
         cp_matches = buscar_cp(localidad, provincia)
         
         with col_cp:
             if len(cp_matches) == 1:
-                c_postal = st.text_input("C.P. Fiscal *", value=cp_matches[0], help="Autocompletado desde Base de Datos", disabled=is_afip)
+                c_postal = st.text_input("C.P. Fiscal *", value=cp_matches[0], help="Autocompletado desde Base de Datos")
             elif len(cp_matches) > 1:
-                c_postal = st.selectbox("C.P. Fiscal *", cp_matches, help="Múltiples opciones encontradas en la Base de Datos", disabled=is_afip)
+                c_postal = st.selectbox("C.P. Fiscal *", cp_matches, help="Múltiples opciones encontradas en la Base de Datos")
             else:
-                c_postal = st.text_input("C.P. Fiscal *", help="No encontrado en Base de Datos. Ingresa manualmente.", disabled=is_afip)
+                c_postal = st.text_input("C.P. Fiscal *", help="No encontrado en Base de Datos. Ingresa manualmente.")
                 if not is_afip: st.warning("⚠️ Localidad no encontrada. Ingresa el CP a mano.")
                 
         with col_pais:
