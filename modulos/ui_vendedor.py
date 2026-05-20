@@ -126,10 +126,8 @@ def render_vendedor_dashboard():
                     
                     st.balloons()
                     st.success("🎉 ¡Todos los datos fueron extraídos y acomodados en el formulario de abajo!")
-                    # Borrar el componente de audio forzando recarga de clave (opcional) pero con rerun alcanza.
-                    # No reiniciamos el paso, solo hacemos rerun para que se vean los datos.
                 else:
-                    st.error("Hubo un problema procesando el texto con la Inteligencia Artificial.")
+                    st.error(f"Hubo un problema con Gemini: {datos_extraidos.get('error', 'Error desconocido')}")
             else:
                 st.warning("No se escuchó bien. Por favor intenta hablar más fuerte y claro.")
         st.divider()
