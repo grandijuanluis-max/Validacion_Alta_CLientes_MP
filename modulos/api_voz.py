@@ -1,5 +1,17 @@
 import speech_recognition as sr
 import io
+import streamlit as st
+import google.generativeai as genai
+
+# Configurar Gemini si hay API KEY disponible
+api_key = None
+try:
+    api_key = st.secrets.get("GOOGLE_API_KEY", None)
+except:
+    pass
+
+if api_key:
+    genai.configure(api_key=api_key)
 
 def procesar_audio_a_texto(audio_bytes):
     """
@@ -22,3 +34,47 @@ def procesar_audio_a_texto(audio_bytes):
         return f"ERROR_SERVICIO: {e}"
     except Exception as e:
         return f"ERROR_GENERAL: {e}"
+
+def procesar_texto_con_ia(texto):
+    """
+    Usa Gemini para extraer estructuradamente los datos de un cliente a partir de un dictado libre.
+    Devuelve un diccionario JSON con las claves exactas.
+    """
+    if not api_key:
+        return {"error": "No hay API Key de Gemini configurada."}
+        
+    prompt = f"""
+    Eres un asistente de ventas ágil. Extrae la información del siguiente texto dictado por un vendedor 
+    que quiere dar de alta un nuevo cliente. Devuelve ÚNICAMENTE un objeto JSON válido con las siguientes claves 
+    (si algún dato no se menciona, devuelve un string vacío ""):
+    
+    - "cuit": (solo los 11 números, sin guiones ni espacios. Trata de deducirlo si te lo dicen separado)
+    - "n_fantasia": (nombre de fantasía o razón social)
+    - "contacto": (nombre de la persona de contacto)
+    - "telefono": (número de teléfono)
+    - "dom_e": (calle y número del domicilio de entrega)
+    - "loc_e": (localidad de entrega)
+    - "observaciones": (aclaraciones o notas adicionales)
+    
+    Texto dictado: "{texto}"
+    
+    Respuesta JSON pura, sin backticks ni formato markdown:
+    """
+    
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        text_resp = response.text.strip()
+        
+        # Limpiar si el modelo devuelve markdown
+        if text_resp.startswith("```json"):
+            text_resp = text_resp[7:]
+        if text_resp.endswith("```"):
+            text_resp = text_resp[:-3]
+            
+        import json
+        datos = json.loads(text_resp.strip())
+        return datos
+    except Exception as e:
+        print(f"Error en Gemini: {e}")
+        return {"error": str(e)}

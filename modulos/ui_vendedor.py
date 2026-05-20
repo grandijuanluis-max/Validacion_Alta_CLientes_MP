@@ -54,7 +54,6 @@ def render_vendedor_dashboard():
         
     if 'voz_activada' not in st.session_state:
         st.session_state['voz_activada'] = False
-        st.session_state['voz_paso'] = 0
     if 'voz_datos' not in st.session_state:
         st.session_state['voz_datos'] = {
             'n_fantasia': '', 'contacto': '', 'telefono': '', 
@@ -63,88 +62,59 @@ def render_vendedor_dashboard():
 
     col_t1, col_t2 = st.columns([3, 1])
     with col_t2:
-        st.session_state['voz_activada'] = st.toggle("🎙️ Asistente de Voz", value=st.session_state['voz_activada'])
+        st.session_state['voz_activada'] = st.toggle("🎙️ Alta Mágica por Voz", value=st.session_state['voz_activada'])
         
     if st.session_state['voz_activada']:
-        st.info("🤖 **Modo Carga por Voz Activado.** Toca el micrófono para grabar y completar cada paso automáticamente.")
-        
-        paso_actual = st.session_state['voz_paso']
+        st.info("🤖 **Alta Mágica Activada.** Toca el micrófono **una sola vez** y dictá todos los datos del cliente de corrido.")
         
         from audio_recorder_streamlit import audio_recorder
-        from modulos.api_voz import procesar_audio_a_texto
+        from modulos.api_voz import procesar_audio_a_texto, procesar_texto_con_ia
         
-        pasos_texto = [
-            "Paso 1: Dicta el **número de CUIT** (ejemplo: 30 11111111 2)",
-            "Paso 2: Dicta el **Nombre de Fantasía**",
-            "Paso 3: Dicta el nombre de la **Persona de Contacto**",
-            "Paso 4: Dicta el **Teléfono**",
-            "Paso 5: Dicta la calle y número del **Domicilio de Entrega**",
-            "Paso 6: Dicta la **Localidad de Entrega**",
-            "Paso 7: ¿Querés agregar alguna **Observación** para el validador?"
-        ]
+        st.markdown("### 🗣️ Dictá todo (CUIT, Contacto, Domicilio, etc.) y la IA se encarga:")
+        audio_bytes = audio_recorder(text="Grabar", key="audio_voz_magic", recording_color="#e8b62c", neutral_color="#6aa36f")
         
-        if paso_actual < len(pasos_texto):
-            st.markdown(f"### 🗣️ {pasos_texto[paso_actual]}")
-            audio_bytes = audio_recorder(text="Grabar", key=f"audio_voz_{paso_actual}", recording_color="#e8b62c", neutral_color="#6aa36f")
-            
-            if audio_bytes:
-                with st.spinner("Escuchando y procesando..."):
-                    texto_transcrito = procesar_audio_a_texto(audio_bytes)
+        if audio_bytes:
+            with st.spinner("Escuchando tu audio..."):
+                texto_transcrito = procesar_audio_a_texto(audio_bytes)
+                
+            if "ERROR" not in texto_transcrito:
+                st.success(f"🗣️ Reconocido: '{texto_transcrito}'")
+                
+                with st.spinner("✨ Gemini IA está extrayendo y acomodando los datos..."):
+                    datos_extraidos = procesar_texto_con_ia(texto_transcrito)
                     
-                if "ERROR" not in texto_transcrito:
-                    st.success(f"🗣️ Reconocido: '{texto_transcrito}'")
+                if "error" not in datos_extraidos:
+                    cuit_limpio = datos_extraidos.get('cuit', '')
+                    if len(cuit_limpio) == 11:
+                        st.session_state['afip_data']['cuit'] = cuit_limpio
+                        resultado = consultar_cuit_afip(cuit_limpio)
+                        if "error" not in resultado:
+                            st.session_state['afip_data']['nombre'] = resultado.get('nombre', '')
+                            st.session_state['afip_data']['domicilio_f'] = resultado.get('domicilio_fiscal', '')
+                            st.session_state['afip_data']['localidad'] = resultado.get('localidad', '')
+                            st.session_state['afip_data']['provincia'] = resultado.get('provincia', '')
+                            st.session_state['afip_data']['estado'] = resultado.get('estado', '')
+                            st.session_state['afip_data']['tipo_doc_desc'] = resultado.get('tipo_doc_desc', '')
+                            st.session_state['afip_data']['tipo_resp_desc'] = resultado.get('tipo_resp_desc', '')
+                            st.session_state['afip_data']['actividad'] = resultado.get('actividad', '')
+                            st.session_state['afip_data']['cod_acti'] = resultado.get('cod_acti', '')
+                            st.session_state['modo_carga'] = 'afip'
                     
-                    if paso_actual == 0:
-                        cuit_limpio = ''.join(filter(str.isdigit, texto_transcrito))
-                        if len(cuit_limpio) == 11:
-                            st.session_state['afip_data']['cuit'] = cuit_limpio
-                            resultado = consultar_cuit_afip(cuit_limpio)
-                            if "error" not in resultado:
-                                st.session_state['afip_data']['nombre'] = resultado.get('nombre', '')
-                                st.session_state['afip_data']['domicilio_f'] = resultado.get('domicilio_fiscal', '')
-                                st.session_state['afip_data']['localidad'] = resultado.get('localidad', '')
-                                st.session_state['afip_data']['provincia'] = resultado.get('provincia', '')
-                                st.session_state['afip_data']['estado'] = resultado.get('estado', '')
-                                st.session_state['afip_data']['tipo_doc_desc'] = resultado.get('tipo_doc_desc', '')
-                                st.session_state['afip_data']['tipo_resp_desc'] = resultado.get('tipo_resp_desc', '')
-                                st.session_state['afip_data']['actividad'] = resultado.get('actividad', '')
-                                st.session_state['afip_data']['cod_acti'] = resultado.get('cod_acti', '')
-                                st.session_state['modo_carga'] = 'afip'
-                            st.session_state['voz_paso'] += 1
-                            st.rerun()
-                        else:
-                            st.error(f"El CUIT detectado ({cuit_limpio}) no tiene 11 números. Intenta de nuevo.")
-                    elif paso_actual == 1:
-                        st.session_state['voz_datos']['n_fantasia'] = texto_transcrito
-                        st.session_state['voz_paso'] += 1
-                        st.rerun()
-                    elif paso_actual == 2:
-                        st.session_state['voz_datos']['contacto'] = texto_transcrito
-                        st.session_state['voz_paso'] += 1
-                        st.rerun()
-                    elif paso_actual == 3:
-                        st.session_state['voz_datos']['telefono'] = texto_transcrito
-                        st.session_state['voz_paso'] += 1
-                        st.rerun()
-                    elif paso_actual == 4:
-                        st.session_state['voz_datos']['dom_e'] = texto_transcrito
-                        st.session_state['voz_paso'] += 1
-                        st.rerun()
-                    elif paso_actual == 5:
-                        st.session_state['voz_datos']['loc_e'] = texto_transcrito
-                        st.session_state['voz_paso'] += 1
-                        st.rerun()
-                    elif paso_actual == 6:
-                        st.session_state['voz_datos']['observaciones'] = texto_transcrito
-                        st.session_state['voz_paso'] += 1
-                        st.rerun()
+                    st.session_state['voz_datos']['n_fantasia'] = datos_extraidos.get('n_fantasia', '')
+                    st.session_state['voz_datos']['contacto'] = datos_extraidos.get('contacto', '')
+                    st.session_state['voz_datos']['telefono'] = datos_extraidos.get('telefono', '')
+                    st.session_state['voz_datos']['dom_e'] = datos_extraidos.get('dom_e', '')
+                    st.session_state['voz_datos']['loc_e'] = datos_extraidos.get('loc_e', '')
+                    st.session_state['voz_datos']['observaciones'] = datos_extraidos.get('observaciones', '')
+                    
+                    st.balloons()
+                    st.success("🎉 ¡Todos los datos fueron extraídos y acomodados en el formulario de abajo!")
+                    # Borrar el componente de audio forzando recarga de clave (opcional) pero con rerun alcanza.
+                    # No reiniciamos el paso, solo hacemos rerun para que se vean los datos.
                 else:
-                    st.warning("No se escuchó bien. Por favor intenta hablar más fuerte y claro.")
-        else:
-            st.success("🎉 ¡Todos los campos dictados! Revisa el formulario y presiona 'Guardar'.")
-            if st.button("Empezar de nuevo (Voz)"):
-                st.session_state['voz_paso'] = 0
-                st.rerun()
+                    st.error("Hubo un problema procesando el texto con la Inteligencia Artificial.")
+            else:
+                st.warning("No se escuchó bien. Por favor intenta hablar más fuerte y claro.")
         st.divider()
     if st.session_state['modo_carga'] is None:
         st.info("💡 Paso 1: Busca a tu cliente en AFIP para autocompletar sus datos.")
