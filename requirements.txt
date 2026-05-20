@@ -4,4 +4,4 @@ pandas
 dbf
 requests
 audio-recorder-streamlit
-SpeechRecognition
+google-generativeai
