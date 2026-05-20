@@ -57,7 +57,8 @@ def render_vendedor_dashboard():
     if 'voz_datos' not in st.session_state:
         st.session_state['voz_datos'] = {
             'n_fantasia': '', 'contacto': '', 'telefono': '', 
-            'dom_e': '', 'loc_e': '', 'observaciones': ''
+            'dom_e': '', 'loc_e': '', 'observaciones': '',
+            'tipo_resp': '', 'giro_comercial': '', 'cuit_socio1': '', 'cuit_socio2': ''
         }
 
     col_t1, col_t2 = st.columns([3, 1])
@@ -103,9 +104,25 @@ def render_vendedor_dashboard():
                     st.session_state['voz_datos']['n_fantasia'] = datos_extraidos.get('n_fantasia', '')
                     st.session_state['voz_datos']['contacto'] = datos_extraidos.get('contacto', '')
                     st.session_state['voz_datos']['telefono'] = datos_extraidos.get('telefono', '')
-                    st.session_state['voz_datos']['dom_e'] = datos_extraidos.get('dom_e', '')
-                    st.session_state['voz_datos']['loc_e'] = datos_extraidos.get('loc_e', '')
+                    
+                    dom_e_extraido = datos_extraidos.get('dom_e', '')
+                    loc_e_extraido = datos_extraidos.get('loc_e', '')
+                    
+                    if dom_e_extraido == "MISMO_FISCAL":
+                        st.session_state['voz_datos']['dom_e'] = st.session_state['afip_data'].get('domicilio_f', '')
+                    else:
+                        st.session_state['voz_datos']['dom_e'] = dom_e_extraido
+                        
+                    if loc_e_extraido == "MISMO_FISCAL":
+                        st.session_state['voz_datos']['loc_e'] = st.session_state['afip_data'].get('localidad', '')
+                    else:
+                        st.session_state['voz_datos']['loc_e'] = loc_e_extraido
+                        
                     st.session_state['voz_datos']['observaciones'] = datos_extraidos.get('observaciones', '')
+                    st.session_state['voz_datos']['tipo_resp'] = datos_extraidos.get('tipo_resp', '')
+                    st.session_state['voz_datos']['giro_comercial'] = datos_extraidos.get('giro_comercial', '')
+                    st.session_state['voz_datos']['cuit_socio1'] = datos_extraidos.get('cuit_socio1', '')
+                    st.session_state['voz_datos']['cuit_socio2'] = datos_extraidos.get('cuit_socio2', '')
                     
                     st.balloons()
                     st.success("🎉 ¡Todos los datos fueron extraídos y acomodados en el formulario de abajo!")
@@ -204,15 +221,20 @@ def render_vendedor_dashboard():
                 tdoc_sel = st.selectbox("Tipo Documento *", opciones_tdoc, index=idx_tdoc)
                 
         with col_tresp:
-            val_tresp = st.session_state['afip_data'].get('tipo_resp_desc', '')
-            if is_afip and val_tresp:
-                st.text_input("Tipo Responsable", value=val_tresp, disabled=True)
-                tresp_sel = val_tresp
+            val_tresp = st.session_state['voz_datos'].get('tipo_resp') or st.session_state['afip_data'].get('tipo_resp_desc', '')
+            if is_afip and st.session_state['afip_data'].get('tipo_resp_desc', ''):
+                st.text_input("Tipo Responsable", value=st.session_state['afip_data'].get('tipo_resp_desc', ''), disabled=True)
+                tresp_sel = st.session_state['afip_data'].get('tipo_resp_desc', '')
             else:
                 opciones_resp = ["Seleccionar...", "Responsable Inscripto", "Monotributista", "Exento"]
-                idx_resp = opciones_resp.index(val_tresp) if val_tresp in opciones_resp else 0
+                idx_resp = 0
+                if val_tresp:
+                    for i, opt in enumerate(opciones_resp):
+                        if val_tresp.lower() in opt.lower() or opt.lower() in val_tresp.lower():
+                            idx_resp = i
+                            break
                 tresp_sel = st.selectbox("Tipo Responsable *", opciones_resp, index=idx_resp)
-                if is_afip and not val_tresp:
+                if is_afip and not st.session_state['afip_data'].get('tipo_resp_desc', ''):
                     st.caption("⚠️ AFIP no devolvió impuestos. Por favor, selecciona manualmente.")
                     
         val_acti = st.session_state['afip_data'].get('actividad', '')
@@ -232,13 +254,20 @@ def render_vendedor_dashboard():
         st.markdown("##### Datos Comerciales y Societarios")
         
         ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
-        giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles)
+        giro_voz = st.session_state['voz_datos'].get('giro_comercial', '')
+        idx_giro = 0
+        if giro_voz:
+            for i, r in enumerate(ramos_disponibles):
+                if giro_voz.lower() in r.lower() or r.lower() in giro_voz.lower():
+                    idx_giro = i
+                    break
+        giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles, index=idx_giro)
         
         col_s1, col_s2 = st.columns(2)
         with col_s1:
-            cuit_socio1 = st.text_input("CUIT Socio 1 (Opcional)")
+            cuit_socio1 = st.text_input("CUIT Socio 1 (Opcional)", value=st.session_state['voz_datos'].get('cuit_socio1', ''))
         with col_s2:
-            cuit_socio2 = st.text_input("CUIT Socio 2 (Opcional)")
+            cuit_socio2 = st.text_input("CUIT Socio 2 (Opcional)", value=st.session_state['voz_datos'].get('cuit_socio2', ''))
             
         st.markdown("##### Domicilios y Contactos")
         

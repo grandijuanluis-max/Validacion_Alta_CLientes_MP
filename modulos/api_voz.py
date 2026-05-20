@@ -52,9 +52,15 @@ def procesar_texto_con_ia(texto):
     - "n_fantasia": (nombre de fantasía o razón social)
     - "contacto": (nombre de la persona de contacto)
     - "telefono": (número de teléfono)
+    - "tipo_resp": (tipo de responsable frente al IVA, ej. Responsable Inscripto, Monotributista)
+    - "giro_comercial": (rubro, ramo o a qué se dedica el cliente)
+    - "cuit_socio1": (cuit del socio 1 si lo mencionan, solo números)
+    - "cuit_socio2": (cuit del socio 2 si lo mencionan, solo números)
     - "dom_e": (calle y número del domicilio de entrega)
     - "loc_e": (localidad de entrega)
     - "observaciones": (aclaraciones o notas adicionales)
+    
+    IMPORTANTE SOBRE DOMICILIO DE ENTREGA: Si el vendedor dice que el domicilio de entrega, localidad o código postal es "igual al fiscal", "el mismo", "el mismo que el de AFIP", debes poner exactamente el valor especial "MISMO_FISCAL" en las claves "dom_e" y "loc_e".
     
     Texto dictado: "{texto}"
     
