@@ -68,7 +68,7 @@ def procesar_texto_con_ia(texto):
     """
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
         text_resp = response.text.strip()
         
