@@ -72,7 +72,7 @@ def render_vendedor_dashboard():
         from modulos.api_voz import procesar_audio_a_texto, procesar_texto_con_ia
         
         st.markdown("### 🗣️ Dictá todo (CUIT, Contacto, Domicilio, etc.) y la IA se encarga:")
-        audio_bytes = audio_recorder(text="Grabar", key="audio_voz_magic", recording_color="#e8b62c", neutral_color="#6aa36f")
+        audio_bytes = audio_recorder(text="Grabar", key="audio_voz_magic", recording_color="#e8b62c", neutral_color="#6aa36f", pause_threshold=10.0)
         
         if audio_bytes:
             with st.spinner("Escuchando tu audio..."):

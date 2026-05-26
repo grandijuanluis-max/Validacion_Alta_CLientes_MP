@@ -103,7 +103,7 @@ def _aplanar_json(d: dict, parent_key: str = '', sep: str = '_') -> dict:
     return dict(items)
 
 def _llamar_api_real_nosis(cuit: str) -> dict:
-    """Hace la consulta real HTTP a la API de Nosis SAC."""
+    """Hace la consulta real HTTP a la API de Nosis SAC con reintentos para fallas temporales de DNS/Red."""
     usuario = st.secrets.get("NOSIS_USUARIO")
     token = st.secrets.get("NOSIS_TOKEN")
     url_base = st.secrets.get("NOSIS_URL", "https://ws01.nosis.com").rstrip("/")
@@ -127,22 +127,28 @@ def _llamar_api_real_nosis(cuit: str) -> dict:
         "Accept": "application/json"
     }
     
-    try:
-        response = requests.get(url_completa, params=params, headers=headers, timeout=10)
-        # Si da 404 en /api/variables, reintentar con /rest/variables
-        if response.status_code == 404:
-            url_completa = f"{url_base}/rest/variables"
+    retries = 3
+    for attempt in range(retries):
+        try:
             response = requests.get(url_completa, params=params, headers=headers, timeout=10)
+            # Si da 404 en /api/variables, reintentar con /rest/variables
+            if response.status_code == 404:
+                url_completa = f"{url_base}/rest/variables"
+                response = requests.get(url_completa, params=params, headers=headers, timeout=10)
+                
+            response.raise_for_status()
+            data = response.json()
             
-        response.raise_for_status()
-        data = response.json()
-        
-        # Log para consola del desarrollador para verificar campos devueltos
-        print(f"📡 RESPUESTA REAL NOSIS PARA CUIT {cuit}: {json.dumps(data)}")
-        return data
-    except Exception as e:
-        print(f"❌ Error en llamada HTTP Nosis: {e}")
-        return {"error_api": str(e)}
+            # Log para consola del desarrollador para verificar campos devueltos
+            print(f"📡 RESPUESTA REAL NOSIS PARA CUIT {cuit}: {json.dumps(data)}")
+            return data
+        except Exception as e:
+            if attempt == retries - 1:
+                print(f"❌ Error final tras {retries} intentos en llamada HTTP Nosis: {e}")
+                return {"error_api": str(e)}
+            print(f"⚠️ Reintento {attempt + 1}/{retries} por falla temporal: {e}")
+            time.sleep(1)
+
 
 def _mapear_json_nosis(raw_json: dict) -> dict:
     """Mapea con tolerancia a fallos y aliasing el JSON de Nosis a nuestro esquema de 5 variables."""
