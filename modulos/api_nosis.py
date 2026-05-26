@@ -106,7 +106,7 @@ def _llamar_api_real_nosis(cuit: str) -> dict:
     """Hace la consulta real HTTP a la API de Nosis SAC."""
     usuario = st.secrets.get("NOSIS_USUARIO")
     token = st.secrets.get("NOSIS_TOKEN")
-    url_base = st.secrets.get("NOSIS_URL", "https://api.nosis.com").rstrip("/")
+    url_base = st.secrets.get("NOSIS_URL", "https://ws01.nosis.com").rstrip("/")
     
     # Si las credenciales no están configuradas o tienen el placeholder, retornar None
     if not usuario or not token or "REEMPLAZAR" in str(usuario) or "REEMPLAZAR" in str(token):
@@ -122,12 +122,17 @@ def _llamar_api_real_nosis(cuit: str) -> dict:
         "VR": "1" # Por defecto, paquete de variables 1
     }
     
+    # Forzar formato JSON en la cabecera
+    headers = {
+        "Accept": "application/json"
+    }
+    
     try:
-        response = requests.get(url_completa, params=params, timeout=10)
+        response = requests.get(url_completa, params=params, headers=headers, timeout=10)
         # Si da 404 en /api/variables, reintentar con /rest/variables
         if response.status_code == 404:
             url_completa = f"{url_base}/rest/variables"
-            response = requests.get(url_completa, params=params, timeout=10)
+            response = requests.get(url_completa, params=params, headers=headers, timeout=10)
             
         response.raise_for_status()
         data = response.json()
@@ -144,6 +149,17 @@ def _mapear_json_nosis(raw_json: dict) -> dict:
     if "error_api" in raw_json:
         raise Exception(raw_json["error_api"])
         
+    # Validar si Nosis reportó algún error de autenticación o estado interno
+    # ej: {"Contenido": {"Resultado": {"Estado": 401, "Novedad": "Credenciales inválidas"}}}
+    contenido = raw_json.get("Contenido", {})
+    if isinstance(contenido, dict):
+        resultado_bloque = contenido.get("Resultado", {})
+        if isinstance(resultado_bloque, dict):
+            estado = resultado_bloque.get("Estado", 200)
+            novedad = resultado_bloque.get("Novedad", "")
+            if estado != 200:
+                raise Exception(f"Nosis API {estado}: {novedad}")
+
     # Aplanar el JSON para buscar en cualquier nivel de anidamiento
     flat_json = _aplanar_json(raw_json)
     
@@ -179,8 +195,7 @@ def _mapear_json_nosis(raw_json: dict) -> dict:
     juicios = buscar_valor(posibles_juicios, default=0)  # 0 default (Verde)
     afip = buscar_valor(posibles_afip, default=0)        # 0 default (Verde)
 
-    # Validar si Nosis reportó algún error interno dentro del cuerpo del JSON
-    # ej: {"Contenido": {"Resultado": "Error", "Detalle": "..."}}
+    # Validar si Nosis reportó algún error interno alternativo dentro del cuerpo del JSON
     for k, v in flat_json.items():
         if "resultado" in k.lower() and str(v).lower() in ["error", "fallo", "denegado"]:
             detalle = flat_json.get(k.replace("resultado", "detalle"), "Error reportado por Nosis")
