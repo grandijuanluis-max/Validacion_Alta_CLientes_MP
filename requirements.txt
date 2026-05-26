@@ -6,3 +6,4 @@ requests
 audio-recorder-streamlit
 SpeechRecognition
 google-generativeai
+fpdf
