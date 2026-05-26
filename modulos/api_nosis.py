@@ -73,6 +73,89 @@ def _simular_payload_nosis(cuit: str) -> dict:
             "antiguedad_laboral": 120
         }
 
+def generar_narrativa_explicativa(payload: dict, dictamen: str, semaforos: dict) -> str:
+    """Genera una explicación conversacional y humana del dictamen de riesgo basándose en las variables."""
+    # Extraer variables principales
+    score = payload.get("score_riesgo", 850)
+    bcra = payload.get("calificacion_bcra", 1)
+    cheques = payload.get("cheques_rechazados", 0)
+    juicios = payload.get("juicios_concursos", 0)
+    afip = payload.get("baches_afip_meses", 0)
+    
+    # Extraer alertas impositivas y comercial
+    fa = str(payload.get("facturas_apocrifas", "No")).strip().lower() == "si"
+    df = str(payload.get("deudas_fiscales", "No")).strip().lower() == "si"
+    moroso = str(payload.get("es_moroso", "No")).strip().lower() == "si"
+    
+    causas = []
+    
+    if dictamen == "RECHAZO AUTOMÁTICO":
+        explicacion = "El cliente ha sido RECHAZADO AUTOMÁTICAMENTE debido a la presencia de factores de riesgo crítico en su perfil. Evaluando en detalle, las causas principales son: "
+        
+        # Evaluar causas críticas (Rojas)
+        if semaforos.get("score") == "ROJO":
+            causas.append(f"un score crediticio críticamente bajo de {score} puntos, lo cual representa una probabilidad de incumplimiento extremadamente alta")
+        if semaforos.get("bcra") == "ROJO":
+            causas.append(f"una mala calificación en el Banco Central (Situación {bcra}), lo que evidencia morosidad pesada o deudas en gestión judicial activa")
+        if semaforos.get("cheques") == "ROJO":
+            causas.append(f"un historial de {cheques} cheques rechazados sin fondos en los últimos meses, denotando falta de liquidez operativa")
+        if semaforos.get("juicios") == "ROJO":
+            causas.append(f"la presencia de {juicios} juicios comerciales, pedidos de quiebra o concursos preventivos activos, lo que representa un riesgo legal inaceptable")
+        if semaforos.get("afip") == "ROJO":
+            causas.append(f"un atraso previsional severo de {afip} meses en el pago de cargas sociales y aportes patronales en AFIP")
+        if fa:
+            causas.append("estar registrado en las bases de AFIP por emisión de facturas apócrifas (fraude impositivo)")
+        if df:
+            causas.append("registrar deudas fiscales coactivas y ejecuciones impositivas vigentes en AFIP")
+        if moroso:
+            causas.append("estar reportado como moroso activo en bases de datos comerciales")
+            
+        # Unir causas en lenguaje fluido
+        if causas:
+            explicacion += ", ".join(causas[:-1]) + (" y " + causas[-1] if len(causas) > 1 else causas[0]) + "."
+        else:
+            explicacion += "el comportamiento irregular general observado en sus variables financieras."
+            
+        explicacion += " Bajo estas condiciones, se desaconseja firmemente la apertura de cuenta corriente o facilidades de crédito."
+        
+    elif dictamen == "REVISIÓN GERENCIAL":
+        explicacion = "El cliente califica para REVISIÓN GERENCIAL ya que, aunque no presenta deudas graves o juicios definitivos, muestra alertas amarillas que exigen cautela: "
+        
+        # Evaluar causas moderadas (Amarillas)
+        if semaforos.get("score") == "AMARILLO":
+            causas.append(f"su Score de riesgo ({score} puntos) se encuentra en un rango intermedio, indicando estabilidad moderada")
+        if semaforos.get("bcra") == "AMARILLO":
+            causas.append(f"registra un atraso leve en el Banco Central (Situación {bcra} - Riesgo Potencial)")
+        if semaforos.get("cheques") == "AMARILLO":
+            causas.append(f"presenta tensiones de liquidez puntuales con {cheques} cheques rechazados")
+        if semaforos.get("afip") == "AMARILLO":
+            causas.append(f"muestra un pequeño atraso de {afip} meses en aportes previsionales en AFIP")
+        if moroso:
+            causas.append("registra antecedentes menores de morosidad comercial")
+            
+        if causas:
+            explicacion += ", ".join(causas[:-1]) + (" y " + causas[-1] if len(causas) > 1 else causas[0]) + "."
+        else:
+            explicacion += "la presencia de alertas moderadas en sus antecedentes financieros."
+            
+        explicacion += " Se sugiere realizar un análisis comercial manual, solicitar referencias o establecer un límite de crédito acotado."
+        
+    else: # APROBACIÓN AUTOMÁTICA
+        explicacion = (
+            f"El perfil comercial de este cliente es extraordinariamente sólido y saludable. "
+            f"Presenta un Score crediticio óptimo de {score} puntos (Verde) y un historial impecable en el Banco Central (Situación {bcra} - Normal). "
+            f"No registra cheques rechazados, juicios comerciales, deudas fiscales, facturas apócrifas ni atrasos previsionales de ningún tipo en AFIP. "
+            f"Su estabilidad está respaldada por una antigüedad de inscripción de {payload.get('antiguedad_laboral', 0)} meses "
+        )
+        if payload.get("es_empleado") == "Si":
+            explicacion += f"bajo relación de dependencia activa en la entidad '{payload.get('empleador', 'No registrado')}'. "
+        else:
+            explicacion += f"con categoría tributaria activa y un nivel socioeconómico de rango '{payload.get('nse', 'A')}'. "
+            
+        explicacion += "Representa un riesgo comercial mínimo y cuenta con vía libre absoluta para operar de inmediato."
+        
+    return explicacion
+
 def _evaluar_matriz_decision(payload: dict) -> dict:
     """Aplica la matriz de decisión gerencial al payload."""
     reglas = {}
@@ -115,10 +198,13 @@ def _evaluar_matriz_decision(payload: dict) -> dict:
     else:
         dictamen = "APROBACIÓN AUTOMÁTICA"
         
+    explicacion = generar_narrativa_explicativa(payload, dictamen, reglas)
+        
     return {
         "dictamen": dictamen,
         "semaforos": reglas,
-        "payload_crudo": payload
+        "payload_crudo": payload,
+        "explicacion": explicacion
     }
 
 def _aplanar_json(d: dict, parent_key: str = '', sep: str = '_') -> dict:

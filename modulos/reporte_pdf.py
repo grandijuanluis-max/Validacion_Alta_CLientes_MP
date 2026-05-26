@@ -16,7 +16,7 @@ class NosisPDF(FPDF):
         self.cell(0, 10, clean_str('SARC - SISTEMA DE ALTA RÁPIDA DE CLIENTES'), 0, 1, 'C')
         self.set_font('Arial', 'I', 9)
         self.set_text_color(127, 140, 141) # Gris elegante
-        self.cell(0, 5, clean_str('Dossier de Inteligencia Crediticia & Riesgo Nosis'), 0, 1, 'C')
+        self.cell(0, 5, clean_str('Resumen de Inteligencia Crediticia & Riesgo Nosis'), 0, 1, 'C')
         self.ln(5)
         self.set_draw_color(26, 82, 118)
         self.line(10, self.get_y(), 200, self.get_y())
@@ -26,9 +26,9 @@ class NosisPDF(FPDF):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.set_text_color(127, 140, 141)
-        self.cell(0, 10, clean_str(f'Página {self.page_no()}/{{nb}} - Reporte Confidencial Autorizado'), 0, 0, 'C')
+        self.cell(0, 10, clean_str(f'Página {self.page_no()}/{{nb}} - Resumen Confidencial Autorizado'), 0, 0, 'C')
 
-def generar_pdf_reporte_nosis(payload: dict, cuit: str, dictamen: str, semaforos: dict) -> str:
+def generar_pdf_reporte_nosis(payload: dict, cuit: str, dictamen: str, semaforos: dict, explicacion: str = "") -> str:
     pdf = NosisPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -78,6 +78,10 @@ def generar_pdf_reporte_nosis(payload: dict, cuit: str, dictamen: str, semaforos
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(0, 10, clean_str(f'   DICTAMEN FINAL: {dictamen}'), 0, 1, 'L', fill=False)
     
+    pdf.ln(2)
+    pdf.set_font('Arial', 'I', 9.5)
+    pdf.set_text_color(84, 110, 122) # Gris azulado refinado
+    pdf.multi_cell(190, 4.5, clean_str(f"Análisis del Motor: {explicacion}"))
     pdf.ln(5)
     pdf.set_text_color(44, 62, 80)
     

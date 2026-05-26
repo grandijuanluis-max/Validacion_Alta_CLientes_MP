@@ -11,6 +11,83 @@ MAP_TIPO_RESP = {
     "5.0": "Consumidor Final"
 }
 
+@st.dialog("🛡️ Resumen Nosis de Socio")
+def mostrar_modal_socio(cuit_socio, rol_socio):
+    st.write(f"Consultando información de Nosis para **{rol_socio}** con CUIT: `{cuit_socio}`...")
+    user_id = st.session_state.get('user_id', None)
+    
+    with st.spinner("Conectando con Nosis..."):
+        nosis_data = consultar_y_evaluar_nosis(cuit_socio, user_id)
+        
+    if 'error' in nosis_data:
+        st.warning(nosis_data['error'])
+    else:
+        dictamen = nosis_data.get('dictamen', '')
+        st.caption(f"Fuente de datos: {nosis_data.get('origen', '')}")
+        
+        if dictamen == "RECHAZO AUTOMÁTICO":
+            st.error(f"🛑 DICTAMEN: {dictamen}")
+        elif dictamen == "REVISIÓN GERENCIAL":
+            st.warning(f"⚠️ DICTAMEN: {dictamen}")
+        else:
+            st.success(f"✅ DICTAMEN: {dictamen}")
+            
+        st.info(f"💡 **Análisis Narrativo**: {nosis_data.get('explicacion', '')}")
+        
+        payload = nosis_data.get('payload_crudo', {})
+        semaforos = nosis_data.get('semaforos', {})
+        
+        # Semáforos Principales
+        st.markdown("##### 🚦 Semáforos Principales")
+        def pinta_semaforo(color):
+            if color == "VERDE": return "🟢"
+            if color == "AMARILLO": return "🟡"
+            return "🔴"
+            
+        col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
+        col_m1.metric(f"{pinta_semaforo(semaforos.get('score'))} Score", payload.get('score_riesgo', 850))
+        col_m2.metric(f"{pinta_semaforo(semaforos.get('bcra'))} BCRA", payload.get('calificacion_bcra', 1))
+        col_m3.metric(f"{pinta_semaforo(semaforos.get('cheques'))} Cheques", payload.get('cheques_rechazados', 0))
+        col_m4.metric(f"{pinta_semaforo(semaforos.get('juicios'))} Juicios", payload.get('juicios_concursos', 0))
+        col_m5.metric(f"{pinta_semaforo(semaforos.get('afip'))} AFIP", payload.get('baches_afip_meses', 0))
+        
+        # Inteligencia crediticia
+        st.markdown("##### 📊 Inteligencia y Estabilidad")
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        col_f1.metric("NSE", payload.get('nse', 'No registrado'))
+        col_f2.metric("Antigüedad", f"{payload.get('antiguedad_laboral', 0)} meses")
+        deuda = payload.get('deuda_total', 0)
+        col_f3.metric("Deuda Bancaria", f"$ {deuda:,.2f}" if deuda else "$ 0.00")
+        comp = payload.get('compromiso_mensual', 0)
+        col_f4.metric("Compromiso", f"$ {comp:,.2f}" if comp else "$ 0.00")
+        
+        # Alertas
+        st.markdown("##### 🚨 Alertas Impositivas")
+        def format_alerta(val):
+            if str(val).strip().lower() == "si": return f"⚠️ {val}"
+            return f"✅ {val}"
+        col_a1, col_a2, col_a3 = st.columns(3)
+        col_a1.metric("Apócrifas AFIP", format_alerta(payload.get('facturas_apocrifas', 'No')))
+        col_a2.metric("Deuda Fiscal", format_alerta(payload.get('deudas_fiscales', 'No')))
+        col_a3.metric("Es Moroso", format_alerta(payload.get('es_moroso', 'No')))
+        
+        # Botón de Descarga del Reporte PDF para el Socio
+        st.markdown("##### 📄 Exportación Oficial")
+        try:
+            from modulos.reporte_pdf import generar_pdf_reporte_nosis
+            path_pdf = generar_pdf_reporte_nosis(payload, cuit_socio, dictamen, semaforos, nosis_data.get('explicacion', ''))
+            with open(path_pdf, "rb") as pdf_file:
+                st.download_button(
+                    label="📥 Descargar Resumen Socio PDF",
+                    data=pdf_file,
+                    file_name=f"Resumen_Socio_{cuit_socio}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key=f"dl_pdf_socio_{cuit_socio}"
+                )
+        except Exception as pdf_err:
+            st.caption(f"Error generando PDF del socio: {pdf_err}")
+
 def render_validador_dashboard():
     st.header("✅ Validación de Clientes")
     
@@ -103,6 +180,9 @@ def render_validador_dashboard():
                     st.success(f"### ✅ DICTAMEN: {dictamen}")
                     st.markdown("Perfil crediticio óptimo. Vía libre para operar.")
                 
+                # Explicación conversacional del dictamen
+                st.info(f"💡 **Análisis Narrativo del Motor**: {nosis_data.get('explicacion', '')}")
+                
                 payload = nosis_data.get('payload_crudo', {})
                 semaforos = nosis_data.get('semaforos', {})
                 
@@ -159,18 +239,18 @@ def render_validador_dashboard():
                 st.markdown("##### 📄 Exportación de Reporte Oficial")
                 try:
                     from modulos.reporte_pdf import generar_pdf_reporte_nosis
-                    path_pdf = generar_pdf_reporte_nosis(payload, client_data.get('cuit', ''), dictamen, semaforos)
+                    path_pdf = generar_pdf_reporte_nosis(payload, client_data.get('cuit', ''), dictamen, semaforos, nosis_data.get('explicacion', ''))
                     with open(path_pdf, "rb") as pdf_file:
                         st.download_button(
-                            label="📥 Descargar Dossier Comercial PDF",
+                            label="📥 Descargar Resumen PDF",
                             data=pdf_file,
-                            file_name=f"Dossier_Riesgo_{client_data.get('cuit', '')}.pdf",
+                            file_name=f"Resumen_Riesgo_{client_data.get('cuit', '')}.pdf",
                             mime="application/pdf",
                             use_container_width=True,
                             type="secondary"
                         )
                 except Exception as pdf_err:
-                    st.caption(f"No se pudo generar el dossier PDF automáticamente: {pdf_err}")
+                    st.caption(f"No se pudo generar el resumen PDF automáticamente: {pdf_err}")
                 
                 with st.expander("ℹ️ ¿Cómo leer estas mediciones? (Glosario Nosis)"):
                     st.markdown("""
@@ -210,6 +290,106 @@ def render_validador_dashboard():
             giro = col_s1.text_input("Giro Comercial", value=client_data.get('giro_comercial', ''), disabled=not edit_mode)
             socio1 = col_s2.text_input("CUIT Socio 1", value=client_data.get('cuit_socio1', ''), disabled=not edit_mode)
             socio2 = col_s3.text_input("CUIT Socio 2", value=client_data.get('cuit_socio2', ''), disabled=not edit_mode)
+            
+            # Sección dedicada y responsiva de consultas Nosis para Socios
+            has_soc1 = socio1 and str(socio1).strip()
+            has_soc2 = socio2 and str(socio2).strip()
+            
+            if has_soc1 or has_soc2:
+                st.markdown("##### 👥 Consultas Nosis de Socios")
+                col_soc1, col_soc2 = st.columns(2)
+                
+                if has_soc1:
+                    with col_soc1:
+                        cuit_s1_str = str(socio1).strip()
+                        st.markdown(
+                            f"""
+                            <div style="background-color: rgba(26, 82, 118, 0.05); padding: 12px; border-radius: 8px; border-left: 4px solid #1a5276; margin-bottom: 8px;">
+                                <h6 style="margin: 0; color: #1a5276; font-size: 14px; font-weight: bold;">👤 Socio 1</h6>
+                                <p style="margin: 3px 0 0 0; font-size: 13px; color: #566573;">CUIT: <b>{cuit_s1_str}</b></p>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        c1, c2 = st.columns(2)
+                        if c1.button("🔍 Análisis Nosis", key="btn_socio1_analisis_new", use_container_width=True):
+                            mostrar_modal_socio(cuit_s1_str, "Socio 1")
+                            
+                        # Botón de Descarga inteligente para Socio 1
+                        pdf_key_s1 = f"pdf_path_socio_{cuit_s1_str}"
+                        import os
+                        if pdf_key_s1 in st.session_state and os.path.exists(st.session_state[pdf_key_s1]):
+                            with open(st.session_state[pdf_key_s1], "rb") as f:
+                                c2.download_button(
+                                    label="📥 descarga de resumen Cuit socio",
+                                    data=f,
+                                    file_name=f"Resumen_Socio_{cuit_s1_str}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_socio1_ready_new_{cuit_s1_str}",
+                                    use_container_width=True
+                                )
+                        else:
+                            if c2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio1_gen_new_{cuit_s1_str}", use_container_width=True):
+                                with st.spinner("Generando PDF..."):
+                                    user_id = st.session_state.get('user_id', None)
+                                    nosis_data = consultar_y_evaluar_nosis(cuit_s1_str, user_id)
+                                    if 'error' not in nosis_data:
+                                        payload = nosis_data.get('payload_crudo', {})
+                                        dictamen = nosis_data.get('dictamen', '')
+                                        semaforos = nosis_data.get('semaforos', {})
+                                        explicacion = nosis_data.get('explicacion', '')
+                                        from modulos.reporte_pdf import generar_pdf_reporte_nosis
+                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s1_str, dictamen, semaforos, explicacion)
+                                        st.session_state[pdf_key_s1] = path_pdf
+                                        st.rerun()
+                                    else:
+                                        st.error(nosis_data['error'])
+                                        
+                if has_soc2:
+                    with col_soc2:
+                        cuit_s2_str = str(socio2).strip()
+                        st.markdown(
+                            f"""
+                            <div style="background-color: rgba(26, 82, 118, 0.05); padding: 12px; border-radius: 8px; border-left: 4px solid #1a5276; margin-bottom: 8px;">
+                                <h6 style="margin: 0; color: #1a5276; font-size: 14px; font-weight: bold;">👤 Socio 2</h6>
+                                <p style="margin: 3px 0 0 0; font-size: 13px; color: #566573;">CUIT: <b>{cuit_s2_str}</b></p>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        c1_s2, c2_s2 = st.columns(2)
+                        if c1_s2.button("🔍 Análisis Nosis", key="btn_socio2_analisis_new", use_container_width=True):
+                            mostrar_modal_socio(cuit_s2_str, "Socio 2")
+                            
+                        # Botón de Descarga inteligente para Socio 2
+                        pdf_key_s2 = f"pdf_path_socio_{cuit_s2_str}"
+                        import os
+                        if pdf_key_s2 in st.session_state and os.path.exists(st.session_state[pdf_key_s2]):
+                            with open(st.session_state[pdf_key_s2], "rb") as f:
+                                c2_s2.download_button(
+                                    label="📥 descarga de resumen Cuit socio",
+                                    data=f,
+                                    file_name=f"Resumen_Socio_{cuit_s2_str}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_socio2_ready_new_{cuit_s2_str}",
+                                    use_container_width=True
+                                )
+                        else:
+                            if c2_s2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio2_gen_new_{cuit_s2_str}", use_container_width=True):
+                                with st.spinner("Generando PDF..."):
+                                    user_id = st.session_state.get('user_id', None)
+                                    nosis_data = consultar_y_evaluar_nosis(cuit_s2_str, user_id)
+                                    if 'error' not in nosis_data:
+                                        payload = nosis_data.get('payload_crudo', {})
+                                        dictamen = nosis_data.get('dictamen', '')
+                                        semaforos = nosis_data.get('semaforos', {})
+                                        explicacion = nosis_data.get('explicacion', '')
+                                        from modulos.reporte_pdf import generar_pdf_reporte_nosis
+                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s2_str, dictamen, semaforos, explicacion)
+                                        st.session_state[pdf_key_s2] = path_pdf
+                                        st.rerun()
+                                    else:
+                                        st.error(nosis_data['error'])
             
             st.markdown("##### Domicilio Fiscal (AFIP)")
             dom_f = st.text_input("Domicilio Fiscal", value=client_data.get('domicilio_f', ''), disabled=True)
