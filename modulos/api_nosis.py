@@ -107,24 +107,26 @@ def _llamar_api_real_nosis(cuit: str) -> dict:
     usuario = st.secrets.get("NOSIS_USUARIO")
     token = st.secrets.get("NOSIS_TOKEN")
     url_base = st.secrets.get("NOSIS_URL", "https://ws01.nosis.com").rstrip("/")
+    vr_config = st.secrets.get("NOSIS_VR", "281")
     
     # Si las credenciales no están configuradas o tienen el placeholder, retornar None
-    if not usuario or not token or "REEMPLAZAR" in str(usuario) or "REEMPLAZAR" in str(token):
+    if not token or "REEMPLAZAR" in str(token):
         return None
         
     url_completa = f"{url_base}/api/variables"
-    params = {
-        "Usuario": str(usuario).strip(),
-        "Token": str(token).strip(),
-        "Documento": str(cuit).replace("-", "").strip(),
-        "Sexo": "",
-        "RazonSocial": "",
-        "VR": "1" # Por defecto, paquete de variables 1
+    
+    # Autenticación recomendada por Nosis: Enviar API-Key en cabecera HTTP y campos usuario/token vacíos en query string.
+    headers = {
+        "X-API-Key": str(token).strip(),
+        "Accept": "application/json"
     }
     
-    # Forzar formato JSON en la cabecera
-    headers = {
-        "Accept": "application/json"
+    params = {
+        "usuario": "",
+        "token": "",
+        "documento": str(cuit).replace("-", "").strip(),
+        "VR": str(vr_config).strip(),
+        "format": "json"
     }
     
     retries = 3
@@ -138,6 +140,20 @@ def _llamar_api_real_nosis(cuit: str) -> dict:
                 
             response.raise_for_status()
             data = response.json()
+            
+            # Verificar si hay un error de "VR inválido" retornado lógicamente
+            contenido = data.get("Contenido", {})
+            resultado_bloque = contenido.get("Resultado", {}) if isinstance(contenido, dict) else {}
+            estado_interno = resultado_bloque.get("Estado", 200) if isinstance(resultado_bloque, dict) else 200
+            novedad_interna = resultado_bloque.get("Novedad", "") if isinstance(resultado_bloque, dict) else ""
+            
+            # Si el VR es inválido para esta credencial, reintentar automáticamente con VR 1
+            if estado_interno == 400 and "VR inválido" in novedad_interna and params["VR"] != "1":
+                print(f"⚠️ VR {params['VR']} inválido para estas credenciales. Reintentando automáticamente con VR 1...")
+                params["VR"] = "1"
+                response = requests.get(url_completa, params=params, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
             
             # Log para consola del desarrollador para verificar campos devueltos
             print(f"📡 RESPUESTA REAL NOSIS PARA CUIT {cuit}: {json.dumps(data)}")
@@ -166,32 +182,56 @@ def _mapear_json_nosis(raw_json: dict) -> dict:
             if estado != 200:
                 raise Exception(f"Nosis API {estado}: {novedad}")
 
-    # Aplanar el JSON para buscar en cualquier nivel de anidamiento
+    # 1. Intentar extraer del arreglo de variables de Nosis (más confiable y directo)
+    variables_dict = {}
+    contenido = raw_json.get("Contenido", {})
+    if isinstance(contenido, dict):
+        datos = contenido.get("Datos", {})
+        if isinstance(datos, dict):
+            for var in datos.get("Variables", []):
+                if isinstance(var, dict):
+                    nombre = var.get("Nombre")
+                    valor = var.get("Valor")
+                    if nombre is not None:
+                        variables_dict[nombre.strip().lower()] = valor
+
+    # Aplanar el JSON para buscar en cualquier nivel de anidamiento como fallback
     flat_json = _aplanar_json(raw_json)
     
     # Definición de alias para cada variable
-    posibles_score = ["score", "score_riesgo", "scoreriesgo", "vi_score", "vi_score_riesgo", "score_nosis", "score_final", "score_sac", "vi_score_sac"]
-    posibles_bcra = ["bcra", "calificacion_bcra", "calificacionbcra", "sit_bcra", "situacion_bcra", "peorsitbcra", "peor_situacion_bcra", "vi_bcra_situacion", "situacion", "peorsit"]
-    posibles_cheques = ["cheques", "cheques_rechazados", "chequesrechazados", "cant_cheq_rech", "cantcheqrech", "vi_cheques_rechazados", "cant_cheques", "rechazados", "cheq_rech"]
-    posibles_juicios = ["juicios", "juicios_concursos", "juiciosconcursos", "juicios_cant", "cant_juicios", "cantjuicios", "vi_juicios", "concursos", "quiebras"]
-    posibles_afip = ["afip", "baches_afip", "baches_afip_meses", "cant_baches_afip", "baches", "vi_baches_afip", "bachesafip", "atraso_afip", "deuda_afip"]
+    posibles_score = ["score", "score_riesgo", "scoreriesgo", "vi_score", "vi_score_riesgo", "score_nosis", "score_final", "score_sac", "vi_score_sac", "sco_vig", "vi_sco_vig"]
+    posibles_bcra = ["bcra", "calificacion_bcra", "calificacionbcra", "sit_bcra", "situacion_bcra", "peorsitbcra", "peor_situacion_bcra", "vi_bcra_situacion", "situacion", "peorsit", "ci_3m_peorsit", "vi_ci_3m_peorsit", "ci_vig_peorsit", "vi_ci_vig_peorsit"]
+    posibles_cheques = ["cheques", "cheques_rechazados", "chequesrechazados", "cant_cheq_rech", "cantcheqrech", "vi_cheques_rechazados", "cant_cheques", "rechazados", "cheq_rech", "hc_3m_sf_cant", "hc_6m_sf_cant", "vi_hc_3m_sf_cant", "vi_hc_6m_sf_cant"]
+    posibles_juicios = ["juicios", "juicios_concursos", "juiciosconcursos", "juicios_cant", "cant_juicios", "cantjuicios", "vi_juicios", "concursos", "quiebras", "ju_12m_cant", "bc_dem_cant", "vi_ju_12m_cant", "vi_bc_dem_cant"]
+    posibles_afip = ["afip", "baches_afip", "baches_afip_meses", "cant_baches_afip", "baches", "vi_baches_afip", "bachesafip", "atraso_afip", "deuda_afip", "ap_4m_empleado_impagos_cant", "vi_ap_4m_empleado_impagos_cant"]
 
     def buscar_valor(claves_candidatas, default=0):
-        # 1. Coincidencia exacta ignorando case
+        # A. Buscar en el diccionario directo de variables
+        for cand in claves_candidatas:
+            cand_lower = cand.lower()
+            if cand_lower in variables_dict:
+                val = variables_dict[cand_lower]
+                try:
+                    return int(float(val)) if val is not None and str(val).strip() not in ["", "-"] else default
+                except:
+                    pass
+
+        # B. Coincidencia exacta ignorando case en flat_json (fallback)
         for k, v in flat_json.items():
             if k.lower() in [c.lower() for c in claves_candidatas]:
                 try:
-                    return int(float(v)) if v is not None else default
+                    return int(float(v)) if v is not None and str(v).strip() not in ["", "-"] else default
                 except:
-                    return default
-        # 2. Coincidencia por subcadena
+                    pass
+
+        # C. Coincidencia por subcadena en flat_json (fallback)
         for k, v in flat_json.items():
             for cand in claves_candidatas:
                 if cand.lower() in k.lower():
                     try:
-                        return int(float(v)) if v is not None else default
+                        return int(float(v)) if v is not None and str(v).strip() not in ["", "-"] else default
                     except:
-                        return default
+                        pass
         return default
 
     # Extraer y mapear variables de forma segura
