@@ -287,13 +287,32 @@ def render_validador_dashboard():
             
             st.markdown("##### Datos Comerciales y Societarios")
             col_s1, col_s2, col_s3 = st.columns(3)
-            giro = col_s1.text_input("Giro Comercial", value=client_data.get('giro_comercial', ''), disabled=not edit_mode)
-            socio1 = col_s2.text_input("CUIT Socio 1", value=client_data.get('cuit_socio1', ''), disabled=not edit_mode)
-            socio2 = col_s3.text_input("CUIT Socio 2", value=client_data.get('cuit_socio2', ''), disabled=not edit_mode)
+            # Función para limpiar el valor de CUIT proveniente de la base de datos (por ejemplo, 'nan' o float)
+            def _limpiar_cuit_db(val):
+                if val is None:
+                    return ""
+                val_str = str(val).strip()
+                if val_str.lower() in ["", "nan", "none"]:
+                    return ""
+                # Si viene con .0, removerlo
+                if val_str.endswith(".0"):
+                    val_str = val_str[:-2]
+                return val_str
+
+            val_socio1 = _limpiar_cuit_db(client_data.get('cuit_socio1', ''))
+            val_socio2 = _limpiar_cuit_db(client_data.get('cuit_socio2', ''))
+
+            client_id = str(client_data.get('id', 'default'))
+            giro = col_s1.text_input("Giro Comercial", value=client_data.get('giro_comercial', ''), disabled=not edit_mode, key=f"giro_{client_id}")
+            socio1 = col_s2.text_input("CUIT Socio 1", value=val_socio1, disabled=not edit_mode, key=f"socio1_{client_id}")
+            socio2 = col_s3.text_input("CUIT Socio 2", value=val_socio2, disabled=not edit_mode, key=f"socio2_{client_id}")
             
-            # Sección dedicada y responsiva de consultas Nosis para Socios
-            has_soc1 = socio1 and str(socio1).strip()
-            has_soc2 = socio2 and str(socio2).strip()
+            # Limpiar e identificar si son CUITs válidos (solo dígitos y exactamente 11)
+            cuit_s1_digits = "".join(filter(str.isdigit, str(socio1)))
+            cuit_s2_digits = "".join(filter(str.isdigit, str(socio2)))
+            
+            has_soc1 = len(cuit_s1_digits) == 11
+            has_soc2 = len(cuit_s2_digits) == 11
             
             if has_soc1 or has_soc2:
                 st.markdown("##### 👥 Consultas Nosis de Socios")
@@ -301,45 +320,44 @@ def render_validador_dashboard():
                 
                 if has_soc1:
                     with col_soc1:
-                        cuit_s1_str = str(socio1).strip()
                         st.markdown(
                             f"""
                             <div style="background-color: rgba(26, 82, 118, 0.05); padding: 12px; border-radius: 8px; border-left: 4px solid #1a5276; margin-bottom: 8px;">
                                 <h6 style="margin: 0; color: #1a5276; font-size: 14px; font-weight: bold;">👤 Socio 1</h6>
-                                <p style="margin: 3px 0 0 0; font-size: 13px; color: #566573;">CUIT: <b>{cuit_s1_str}</b></p>
+                                <p style="margin: 3px 0 0 0; font-size: 13px; color: #566573;">CUIT: <b>{cuit_s1_digits}</b></p>
                             </div>
                             """,
                             unsafe_allow_html=True
                         )
                         c1, c2 = st.columns(2)
-                        if c1.button("🔍 Análisis Nosis", key="btn_socio1_analisis_new", use_container_width=True):
-                            mostrar_modal_socio(cuit_s1_str, "Socio 1")
+                        if c1.button("🔍 Análisis Nosis", key=f"btn_socio1_analisis_new_{client_id}", use_container_width=True):
+                            mostrar_modal_socio(cuit_s1_digits, "Socio 1")
                             
                         # Botón de Descarga inteligente para Socio 1
-                        pdf_key_s1 = f"pdf_path_socio_{cuit_s1_str}"
+                        pdf_key_s1 = f"pdf_path_socio_{cuit_s1_digits}"
                         import os
                         if pdf_key_s1 in st.session_state and os.path.exists(st.session_state[pdf_key_s1]):
                             with open(st.session_state[pdf_key_s1], "rb") as f:
                                 c2.download_button(
                                     label="📥 descarga de resumen Cuit socio",
                                     data=f,
-                                    file_name=f"Resumen_Socio_{cuit_s1_str}.pdf",
+                                    file_name=f"Resumen_Socio_{cuit_s1_digits}.pdf",
                                     mime="application/pdf",
-                                    key=f"dl_socio1_ready_new_{cuit_s1_str}",
+                                    key=f"dl_socio1_ready_new_{cuit_s1_digits}_{client_id}",
                                     use_container_width=True
                                 )
                         else:
-                            if c2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio1_gen_new_{cuit_s1_str}", use_container_width=True):
+                            if c2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio1_gen_new_{cuit_s1_digits}_{client_id}", use_container_width=True):
                                 with st.spinner("Generando PDF..."):
                                     user_id = st.session_state.get('user_id', None)
-                                    nosis_data = consultar_y_evaluar_nosis(cuit_s1_str, user_id)
+                                    nosis_data = consultar_y_evaluar_nosis(cuit_s1_digits, user_id)
                                     if 'error' not in nosis_data:
                                         payload = nosis_data.get('payload_crudo', {})
                                         dictamen = nosis_data.get('dictamen', '')
                                         semaforos = nosis_data.get('semaforos', {})
                                         explicacion = nosis_data.get('explicacion', '')
                                         from modulos.reporte_pdf import generar_pdf_reporte_nosis
-                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s1_str, dictamen, semaforos, explicacion)
+                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s1_digits, dictamen, semaforos, explicacion)
                                         st.session_state[pdf_key_s1] = path_pdf
                                         st.rerun()
                                     else:
@@ -347,68 +365,67 @@ def render_validador_dashboard():
                                         
                 if has_soc2:
                     with col_soc2:
-                        cuit_s2_str = str(socio2).strip()
                         st.markdown(
                             f"""
                             <div style="background-color: rgba(26, 82, 118, 0.05); padding: 12px; border-radius: 8px; border-left: 4px solid #1a5276; margin-bottom: 8px;">
                                 <h6 style="margin: 0; color: #1a5276; font-size: 14px; font-weight: bold;">👤 Socio 2</h6>
-                                <p style="margin: 3px 0 0 0; font-size: 13px; color: #566573;">CUIT: <b>{cuit_s2_str}</b></p>
+                                <p style="margin: 3px 0 0 0; font-size: 13px; color: #566573;">CUIT: <b>{cuit_s2_digits}</b></p>
                             </div>
                             """,
                             unsafe_allow_html=True
                         )
                         c1_s2, c2_s2 = st.columns(2)
-                        if c1_s2.button("🔍 Análisis Nosis", key="btn_socio2_analisis_new", use_container_width=True):
-                            mostrar_modal_socio(cuit_s2_str, "Socio 2")
+                        if c1_s2.button("🔍 Análisis Nosis", key=f"btn_socio2_analisis_new_{client_id}", use_container_width=True):
+                            mostrar_modal_socio(cuit_s2_digits, "Socio 2")
                             
                         # Botón de Descarga inteligente para Socio 2
-                        pdf_key_s2 = f"pdf_path_socio_{cuit_s2_str}"
+                        pdf_key_s2 = f"pdf_path_socio_{cuit_s2_digits}"
                         import os
                         if pdf_key_s2 in st.session_state and os.path.exists(st.session_state[pdf_key_s2]):
                             with open(st.session_state[pdf_key_s2], "rb") as f:
                                 c2_s2.download_button(
                                     label="📥 descarga de resumen Cuit socio",
                                     data=f,
-                                    file_name=f"Resumen_Socio_{cuit_s2_str}.pdf",
+                                    file_name=f"Resumen_Socio_{cuit_s2_digits}.pdf",
                                     mime="application/pdf",
-                                    key=f"dl_socio2_ready_new_{cuit_s2_str}",
+                                    key=f"dl_socio2_ready_new_{cuit_s2_digits}_{client_id}",
                                     use_container_width=True
                                 )
                         else:
-                            if c2_s2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio2_gen_new_{cuit_s2_str}", use_container_width=True):
+                            if c2_s2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio2_gen_new_{cuit_s2_digits}_{client_id}", use_container_width=True):
                                 with st.spinner("Generando PDF..."):
                                     user_id = st.session_state.get('user_id', None)
-                                    nosis_data = consultar_y_evaluar_nosis(cuit_s2_str, user_id)
+                                    nosis_data = consultar_y_evaluar_nosis(cuit_s2_digits, user_id)
                                     if 'error' not in nosis_data:
                                         payload = nosis_data.get('payload_crudo', {})
                                         dictamen = nosis_data.get('dictamen', '')
                                         semaforos = nosis_data.get('semaforos', {})
                                         explicacion = nosis_data.get('explicacion', '')
                                         from modulos.reporte_pdf import generar_pdf_reporte_nosis
-                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s2_str, dictamen, semaforos, explicacion)
+                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s2_digits, dictamen, semaforos, explicacion)
                                         st.session_state[pdf_key_s2] = path_pdf
                                         st.rerun()
                                     else:
                                         st.error(nosis_data['error'])
             
             st.markdown("##### Domicilio Fiscal (AFIP)")
-            dom_f = st.text_input("Domicilio Fiscal", value=client_data.get('domicilio_f', ''), disabled=True)
+            dom_f = st.text_input("Domicilio Fiscal", value=client_data.get('domicilio_f', ''), disabled=True, key=f"dom_f_{client_id}")
             col_f1, col_f2, col_f3 = st.columns(3)
-            cp_f = col_f1.text_input("C.P. Fiscal", value=client_data.get('c_postal', ''), disabled=True)
-            loc_f = col_f2.text_input("Localidad Fiscal", value=client_data.get('localidad', ''), disabled=True)
-            prov_f = col_f3.text_input("Provincia Fiscal", value=client_data.get('provincia', ''), disabled=True)
+            cp_f = col_f1.text_input("C.P. Fiscal", value=client_data.get('c_postal', ''), disabled=True, key=f"cp_f_{client_id}")
+            loc_f = col_f2.text_input("Localidad Fiscal", value=client_data.get('localidad', ''), disabled=True, key=f"loc_f_{client_id}")
+            prov_f = col_f3.text_input("Provincia Fiscal", value=client_data.get('provincia', ''), disabled=True, key=f"prov_f_{client_id}")
 
             st.markdown("##### Domicilio de Entrega")
-            dom_e = st.text_input("Domicilio Entrega", value=client_data.get('domicilio_e', ''), disabled=not edit_mode)
+            dom_e = st.text_input("Domicilio Entrega", value=client_data.get('domicilio_e', ''), disabled=not edit_mode, key=f"dom_e_{client_id}")
             col_e1, col_e2, col_e3 = st.columns(3)
-            cp_e = col_e1.text_input("C.P. Entrega", value=client_data.get('cp_ent', ''), disabled=not edit_mode)
-            loc_e = col_e2.text_input("Localidad Entrega", value=client_data.get('local_ent', ''), disabled=not edit_mode)
-            prov_e = col_e3.text_input("Provincia Entrega", value=client_data.get('prov_ent', ''), disabled=not edit_mode)
+            cp_e = col_e1.text_input("C.P. Entrega", value=client_data.get('cp_ent', ''), disabled=not edit_mode, key=f"cp_e_{client_id}")
+            loc_e = col_e2.text_input("Localidad Entrega", value=client_data.get('local_ent', ''), disabled=not edit_mode, key=f"loc_e_{client_id}")
+            prov_e = col_e3.text_input("Provincia Entrega", value=client_data.get('prov_ent', ''), disabled=not edit_mode, key=f"prov_e_{client_id}")
             
             st.markdown("##### Contacto")
             col_c1, col_c2 = st.columns(2)
-            contacto = col_c1.text_input("Persona de Contacto", value=client_data.get('contacto', ''), disabled=not edit_mode)
-            telefono = col_c2.text_input("Teléfono", value=client_data.get('telefono', ''), disabled=not edit_mode)
+            contacto = col_c1.text_input("Persona de Contacto", value=client_data.get('contacto', ''), disabled=not edit_mode, key=f"contacto_{client_id}")
+            telefono = col_c2.text_input("Teléfono", value=client_data.get('telefono', ''), disabled=not edit_mode, key=f"telefono_{client_id}")
             
             st.divider()
             
