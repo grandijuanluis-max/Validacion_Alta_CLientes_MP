@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from modulos.db import supabase
 
 def _simular_payload_nosis(cuit: str) -> dict:
-    """Genera el payload crudo simulado de Nosis."""
+    """Genera el payload crudo simulado de Nosis con todas las variables extendidas."""
     try:
         suma = sum(int(digit) for digit in str(cuit) if digit.isdigit())
     except:
@@ -18,7 +18,19 @@ def _simular_payload_nosis(cuit: str) -> dict:
             "calificacion_bcra": 4,
             "cheques_rechazados": 5,
             "juicios_concursos": 1,
-            "baches_afip_meses": 4
+            "baches_afip_meses": 4,
+            "razon_social": "SIMULACIÓN RIESGO S.A.",
+            "nse": "D2",
+            "es_empleado": "No",
+            "empleador": "No registrado",
+            "deuda_total": 45000000,
+            "compromiso_mensual": 4500000,
+            "cant_bancos": 5,
+            "facturas_apocrifas": "Si",
+            "deudas_fiscales": "Si",
+            "es_moroso": "Si",
+            "consultas_12m": 24,
+            "antiguedad_laboral": 12
         }
     elif suma % 2 == 0:
         return {
@@ -26,7 +38,19 @@ def _simular_payload_nosis(cuit: str) -> dict:
             "calificacion_bcra": 2,
             "cheques_rechazados": 2,
             "juicios_concursos": 0,
-            "baches_afip_meses": 1
+            "baches_afip_meses": 1,
+            "razon_social": "SIMULACIÓN COMERCIAL S.R.L.",
+            "nse": "C3",
+            "es_empleado": "Si",
+            "empleador": "EMPRESA DE SERVICIOS S.R.L.",
+            "deuda_total": 12000000,
+            "compromiso_mensual": 800000,
+            "cant_bancos": 2,
+            "facturas_apocrifas": "No",
+            "deudas_fiscales": "No",
+            "es_moroso": "No",
+            "consultas_12m": 5,
+            "antiguedad_laboral": 48
         }
     else:
         return {
@@ -34,7 +58,19 @@ def _simular_payload_nosis(cuit: str) -> dict:
             "calificacion_bcra": 1,
             "cheques_rechazados": 0,
             "juicios_concursos": 0,
-            "baches_afip_meses": 0
+            "baches_afip_meses": 0,
+            "razon_social": "SIMULACIÓN EXCELENTE S.A.",
+            "nse": "A1",
+            "es_empleado": "Si",
+            "empleador": "UNIVERSIDAD NACIONAL",
+            "deuda_total": 1500000,
+            "compromiso_mensual": 120000,
+            "cant_bancos": 1,
+            "facturas_apocrifas": "No",
+            "deudas_fiscales": "No",
+            "es_moroso": "No",
+            "consultas_12m": 1,
+            "antiguedad_laboral": 120
         }
 
 def _evaluar_matriz_decision(payload: dict) -> dict:
@@ -241,6 +277,41 @@ def _mapear_json_nosis(raw_json: dict) -> dict:
     juicios = buscar_valor(posibles_juicios, default=0)  # 0 default (Verde)
     afip = buscar_valor(posibles_afip, default=0)        # 0 default (Verde)
 
+    def buscar_texto(claves, default=""):
+        for cand in claves:
+            cand_lower = cand.lower()
+            if cand_lower in variables_dict:
+                val = variables_dict[cand_lower]
+                if val is not None and str(val).strip() not in ["", "-"]:
+                    return str(val).strip()
+        # Fallback to flat_json
+        for k, v in flat_json.items():
+            for cand in claves:
+                if cand.lower() in k.lower():
+                    if v is not None and str(v).strip() not in ["", "-"]:
+                        return str(v).strip()
+        return default
+
+    # Variables adicionales
+    rz_candidata = buscar_texto(["vi_razonsocial", "razonsocial"], default="")
+    if not rz_candidata:
+        apellido = buscar_texto(["vi_apellido", "apellido"], default="")
+        nombre = buscar_texto(["vi_nombre", "nombre"], default="")
+        if apellido or nombre:
+            rz_candidata = f"{apellido} {nombre}".strip()
+            
+    nse = buscar_texto(["nse", "vi_nse"], default="No registrado")
+    es_empleado = buscar_texto(["vi_empleado_es", "empleado_es"], default="No")
+    empleador = buscar_texto(["vi_empleador_rz", "empleador_rz"], default="No registrado")
+    deuda_total = buscar_valor(["ci_vig_total_monto", "ci_vig_monto"], default=0)
+    compromiso_mensual = buscar_valor(["ci_vig_compmensual", "ci_compmensual"], default=0)
+    cant_bancos = buscar_valor(["ci_vig_total_cantbcos", "ci_vig_cantbcos"], default=0)
+    fa_apocrifas = buscar_texto(["fa_tiene", "facturas_apocrifas"], default="No")
+    deudas_fiscales = buscar_texto(["df_tiene", "deudas_fiscales"], default="No")
+    es_moroso = buscar_texto(["dx_es", "moroso_es"], default="No")
+    consultas_12m = buscar_valor(["co_12m_cant", "co_12m_otros_cant"], default=0)
+    antiguedad_laboral = buscar_valor(["vi_antiguedadlaboral", "vi_inscrip_afip_antiguedad", "vi_inscrip_monotributo_antiguedad"], default=0)
+
     # Validar si Nosis reportó algún error interno alternativo dentro del cuerpo del JSON
     for k, v in flat_json.items():
         if "resultado" in k.lower() and str(v).lower() in ["error", "fallo", "denegado"]:
@@ -252,7 +323,21 @@ def _mapear_json_nosis(raw_json: dict) -> dict:
         "calificacion_bcra": bcra,
         "cheques_rechazados": cheques,
         "juicios_concursos": juicios,
-        "baches_afip_meses": afip
+        "baches_afip_meses": afip,
+        
+        # Nuevas variables estratégicas
+        "razon_social": rz_candidata if rz_candidata else "Razón Social No Encontrada",
+        "nse": nse,
+        "es_empleado": es_empleado,
+        "empleador": empleador,
+        "deuda_total": deuda_total,
+        "compromiso_mensual": compromiso_mensual,
+        "cant_bancos": cant_bancos,
+        "facturas_apocrifas": fa_apocrifas,
+        "deudas_fiscales": deudas_fiscales,
+        "es_moroso": es_moroso,
+        "consultas_12m": consultas_12m,
+        "antiguedad_laboral": antiguedad_laboral
     }
 
 def consultar_y_evaluar_nosis(cuit: str, user_id: str) -> dict:

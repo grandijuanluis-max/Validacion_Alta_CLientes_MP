@@ -112,12 +112,65 @@ def render_validador_dashboard():
                     if color == "AMARILLO": return "🟡"
                     return "🔴"
                     
+                st.markdown("##### 🚦 Semáforos Principales")
                 col_n1, col_n2, col_n3, col_n4, col_n5 = st.columns(5)
-                col_n1.metric(f"{pinta_semaforo(semaforos.get('score'))} Score", payload.get('score_riesgo'))
-                col_n2.metric(f"{pinta_semaforo(semaforos.get('bcra'))} BCRA", payload.get('calificacion_bcra'))
-                col_n3.metric(f"{pinta_semaforo(semaforos.get('cheques'))} Cheques", payload.get('cheques_rechazados'))
-                col_n4.metric(f"{pinta_semaforo(semaforos.get('juicios'))} Juicios", payload.get('juicios_concursos'))
-                col_n5.metric(f"{pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get('baches_afip_meses'))
+                col_n1.metric(f"{pinta_semaforo(semaforos.get('score'))} Score", payload.get('score_riesgo', 850))
+                col_n2.metric(f"{pinta_semaforo(semaforos.get('bcra'))} BCRA", payload.get('calificacion_bcra', 1))
+                col_n3.metric(f"{pinta_semaforo(semaforos.get('cheques'))} Cheques", payload.get('cheques_rechazados', 0))
+                col_n4.metric(f"{pinta_semaforo(semaforos.get('juicios'))} Juicios", payload.get('juicios_concursos', 0))
+                col_n5.metric(f"{pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get('baches_afip_meses', 0))
+                
+                # Nuevas variables estratégicas de Nosis en un contenedor visualmente agradable
+                st.markdown("##### 📊 Inteligencia Crediticia y Estabilidad (Nosis Ampliado)")
+                
+                col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+                col_e1.metric("Nivel Socioeconómico (NSE)", payload.get('nse', 'No registrado'))
+                
+                antiguedad = payload.get('antiguedad_laboral', 0)
+                col_e2.metric("Antigüedad AFIP/Monotributo", f"{antiguedad} meses" if antiguedad else "No registrado")
+                
+                deuda = payload.get('deuda_total', 0)
+                col_e3.metric("Deuda Bancaria Total", f"$ {deuda:,.2f}" if deuda else "$ 0.00")
+                
+                comp = payload.get('compromiso_mensual', 0)
+                col_e4.metric("Compromiso Mensual", f"$ {comp:,.2f}" if comp else "$ 0.00")
+                
+                col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+                col_p1.metric("Es Empleado Rel. Dep.", payload.get('es_empleado', 'No'))
+                col_p2.metric("Bancos Acreedores", payload.get('cant_bancos', 0))
+                col_p3.metric("Consultas CUIT (12m)", payload.get('consultas_12m', 0))
+                
+                emp_rz = payload.get('empleador', 'No registrado')
+                col_p4.metric("Empleador Principal", emp_rz[:20] + "..." if len(emp_rz) > 20 else emp_rz)
+                
+                st.markdown("##### 🚨 Alertas Impositivas y Comercial")
+                col_a1, col_a2, col_a3 = st.columns(3)
+                
+                def format_alerta(val):
+                    if str(val).strip().lower() == "si":
+                        return f"⚠️ {val}"
+                    return f"✅ {val}"
+                
+                col_a1.metric("Facturas Apócrifas AFIP", format_alerta(payload.get('facturas_apocrifas', 'No')))
+                col_a2.metric("Deudas Fiscales AFIP", format_alerta(payload.get('deudas_fiscales', 'No')))
+                col_a3.metric("Es Moroso Comercial", format_alerta(payload.get('es_moroso', 'No')))
+                
+                # Botón de Descarga del Reporte PDF
+                st.markdown("##### 📄 Exportación de Reporte Oficial")
+                try:
+                    from modulos.reporte_pdf import generar_pdf_reporte_nosis
+                    path_pdf = generar_pdf_reporte_nosis(payload, client_data.get('cuit', ''), dictamen, semaforos)
+                    with open(path_pdf, "rb") as pdf_file:
+                        st.download_button(
+                            label="📥 Descargar Dossier Comercial PDF",
+                            data=pdf_file,
+                            file_name=f"Dossier_Riesgo_{client_data.get('cuit', '')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            type="secondary"
+                        )
+                except Exception as pdf_err:
+                    st.caption(f"No se pudo generar el dossier PDF automáticamente: {pdf_err}")
                 
                 with st.expander("ℹ️ ¿Cómo leer estas mediciones? (Glosario Nosis)"):
                     st.markdown("""
@@ -126,6 +179,8 @@ def render_validador_dashboard():
                     *   **Cheques:** Cantidad de cheques rechazados sin fondos en los últimos 24 meses.
                     *   **Juicios:** Cantidad de juicios comerciales, ejecuciones fiscales o estado de concurso preventivo.
                     *   **Deuda AFIP:** Meses de atraso detectados en el pago de cargas sociales (aportes patronales).
+                    *   **NSE (Nivel Socioeconómico):** Clasificación del poder adquisitivo del deudor de la A a la D2.
+                    *   **Compromiso Mensual:** Estimación de cuánto dinero debe pagar por mes para cubrir cuotas, préstamos y tarjetas.
                     """)
                 
             st.divider()
