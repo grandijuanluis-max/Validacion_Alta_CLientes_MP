@@ -1,5 +1,7 @@
 import time
 import json
+import requests
+import streamlit as st
 from datetime import datetime, timezone, timedelta
 from modulos.db import supabase
 
@@ -83,8 +85,117 @@ def _evaluar_matriz_decision(payload: dict) -> dict:
         "payload_crudo": payload
     }
 
+def _aplanar_json(d: dict, parent_key: str = '', sep: str = '_') -> dict:
+    """Aplana recursivamente un JSON anidado."""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(_aplanar_json(v, new_key, sep=sep).items())
+        elif isinstance(v, list):
+            for i, elem in enumerate(v):
+                if isinstance(elem, dict):
+                    items.extend(_aplanar_json(elem, f"{new_key}_{i}", sep=sep).items())
+                else:
+                    items.append((f"{new_key}_{i}", elem))
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+def _llamar_api_real_nosis(cuit: str) -> dict:
+    """Hace la consulta real HTTP a la API de Nosis SAC."""
+    usuario = st.secrets.get("NOSIS_USUARIO")
+    token = st.secrets.get("NOSIS_TOKEN")
+    url_base = st.secrets.get("NOSIS_URL", "https://api.nosis.com").rstrip("/")
+    
+    # Si las credenciales no están configuradas o tienen el placeholder, retornar None
+    if not usuario or not token or "REEMPLAZAR" in str(usuario) or "REEMPLAZAR" in str(token):
+        return None
+        
+    url_completa = f"{url_base}/api/variables"
+    params = {
+        "Usuario": str(usuario).strip(),
+        "Token": str(token).strip(),
+        "Documento": str(cuit).replace("-", "").strip(),
+        "Sexo": "",
+        "RazonSocial": "",
+        "VR": "1" # Por defecto, paquete de variables 1
+    }
+    
+    try:
+        response = requests.get(url_completa, params=params, timeout=10)
+        # Si da 404 en /api/variables, reintentar con /rest/variables
+        if response.status_code == 404:
+            url_completa = f"{url_base}/rest/variables"
+            response = requests.get(url_completa, params=params, timeout=10)
+            
+        response.raise_for_status()
+        data = response.json()
+        
+        # Log para consola del desarrollador para verificar campos devueltos
+        print(f"📡 RESPUESTA REAL NOSIS PARA CUIT {cuit}: {json.dumps(data)}")
+        return data
+    except Exception as e:
+        print(f"❌ Error en llamada HTTP Nosis: {e}")
+        return {"error_api": str(e)}
+
+def _mapear_json_nosis(raw_json: dict) -> dict:
+    """Mapea con tolerancia a fallos y aliasing el JSON de Nosis a nuestro esquema de 5 variables."""
+    if "error_api" in raw_json:
+        raise Exception(raw_json["error_api"])
+        
+    # Aplanar el JSON para buscar en cualquier nivel de anidamiento
+    flat_json = _aplanar_json(raw_json)
+    
+    # Definición de alias para cada variable
+    posibles_score = ["score", "score_riesgo", "scoreriesgo", "vi_score", "vi_score_riesgo", "score_nosis", "score_final", "score_sac", "vi_score_sac"]
+    posibles_bcra = ["bcra", "calificacion_bcra", "calificacionbcra", "sit_bcra", "situacion_bcra", "peorsitbcra", "peor_situacion_bcra", "vi_bcra_situacion", "situacion", "peorsit"]
+    posibles_cheques = ["cheques", "cheques_rechazados", "chequesrechazados", "cant_cheq_rech", "cantcheqrech", "vi_cheques_rechazados", "cant_cheques", "rechazados", "cheq_rech"]
+    posibles_juicios = ["juicios", "juicios_concursos", "juiciosconcursos", "juicios_cant", "cant_juicios", "cantjuicios", "vi_juicios", "concursos", "quiebras"]
+    posibles_afip = ["afip", "baches_afip", "baches_afip_meses", "cant_baches_afip", "baches", "vi_baches_afip", "bachesafip", "atraso_afip", "deuda_afip"]
+
+    def buscar_valor(claves_candidatas, default=0):
+        # 1. Coincidencia exacta ignorando case
+        for k, v in flat_json.items():
+            if k.lower() in [c.lower() for c in claves_candidatas]:
+                try:
+                    return int(float(v)) if v is not None else default
+                except:
+                    return default
+        # 2. Coincidencia por subcadena
+        for k, v in flat_json.items():
+            for cand in claves_candidatas:
+                if cand.lower() in k.lower():
+                    try:
+                        return int(float(v)) if v is not None else default
+                    except:
+                        return default
+        return default
+
+    # Extraer y mapear variables de forma segura
+    score = buscar_valor(posibles_score, default=850) # 850 default (Verde)
+    bcra = buscar_valor(posibles_bcra, default=1)      # 1 default (Verde)
+    cheques = buscar_valor(posibles_cheques, default=0)  # 0 default (Verde)
+    juicios = buscar_valor(posibles_juicios, default=0)  # 0 default (Verde)
+    afip = buscar_valor(posibles_afip, default=0)        # 0 default (Verde)
+
+    # Validar si Nosis reportó algún error interno dentro del cuerpo del JSON
+    # ej: {"Contenido": {"Resultado": "Error", "Detalle": "..."}}
+    for k, v in flat_json.items():
+        if "resultado" in k.lower() and str(v).lower() in ["error", "fallo", "denegado"]:
+            detalle = flat_json.get(k.replace("resultado", "detalle"), "Error reportado por Nosis")
+            raise Exception(f"Nosis API Error: {detalle}")
+
+    return {
+        "score_riesgo": score,
+        "calificacion_bcra": bcra,
+        "cheques_rechazados": cheques,
+        "juicios_concursos": juicios,
+        "baches_afip_meses": afip
+    }
+
 def consultar_y_evaluar_nosis(cuit: str, user_id: str) -> dict:
-    """Flujo completo asíncrono: Caché -> API (Mock) -> Motor de Reglas -> Auditoría"""
+    """Flujo completo asíncrono: Caché -> API Real (o fallback a Simulador) -> Motor de Reglas -> Auditoría"""
     if not cuit or not supabase:
         return {"error": "Faltan datos o conexión a base."}
         
@@ -107,10 +218,29 @@ def consultar_y_evaluar_nosis(cuit: str, user_id: str) -> dict:
             except:
                 pass
                 
-        # 2. Llamada a API (Mock) si no hay caché válido
+        # 2. Llamada a API si no hay caché válido
+        origen_datos = "CACHÉ (Local)"
         if not en_cache:
-            time.sleep(0.5) # Simular latencia de red HTTP
-            payload_crudo = _simular_payload_nosis(cuit)
+            # Intentar llamar a la API real
+            raw_response = _llamar_api_real_nosis(cuit)
+            
+            if raw_response is None:
+                # No configurado -> Fallback a simulación
+                payload_crudo = _simular_payload_nosis(cuit)
+                origen_datos = "API NOSIS (Simulador)"
+            elif "error_api" in raw_response:
+                # Error en llamada -> Fallback seguro a simulación para no romper la app en producción
+                payload_crudo = _simular_payload_nosis(cuit)
+                origen_datos = f"API NOSIS (Simulador - Fallback por error: {raw_response['error_api']})"
+            else:
+                try:
+                    # Mapear respuesta real de Nosis
+                    payload_crudo = _mapear_json_nosis(raw_response)
+                    origen_datos = "API REAL (Nosis)"
+                except Exception as map_err:
+                    # Error al mapear -> Fallback a simulación
+                    payload_crudo = _simular_payload_nosis(cuit)
+                    origen_datos = f"API NOSIS (Simulador - Fallback por mapeo: {map_err})"
             
             # Guardar en caché
             try:
@@ -125,7 +255,7 @@ def consultar_y_evaluar_nosis(cuit: str, user_id: str) -> dict:
                 
         # 3. Procesamiento en el Motor de Reglas
         resultado = _evaluar_matriz_decision(payload_crudo)
-        resultado['origen'] = "CACHÉ (Local)" if en_cache else "API NOSIS (Simulador)"
+        resultado['origen'] = origen_datos
         
         # 4. Auditoría
         try:
