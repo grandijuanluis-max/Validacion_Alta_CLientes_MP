@@ -119,14 +119,21 @@ def render_exportados_dashboard():
                 col_n4.metric(f"{pinta_semaforo_val(s_juicios, 'juicios')} Juicios", s_juicios)
                 col_n5.metric(f"{pinta_semaforo_val(s_afip, 'afip')} Deuda AFIP", s_afip)
                 
-                with st.expander("ℹ️ ¿Cómo leer estas mediciones? (Glosario Nosis)"):
-                    st.markdown("""
-                    *   **Score:** Puntaje estadístico que predice la probabilidad de pago. **>700** es Óptimo (Verde), **450-699** es Riesgo Medio (Amarillo), **<450** es Riesgo Alto (Rojo).
-                    *   **BCRA:** Situación en la Central de Deudores del Banco Central. **1** es Normal (Verde), **2** es Riesgo Potencial (Amarillo), **3, 4 y 5** indican riesgo alto/incobrable (Rojo).
-                    *   **Cheques:** Cantidad de cheques rechazados sin fondos en los últimos 24 meses.
-                    *   **Juicios:** Cantidad de juicios comerciales, ejecuciones fiscales o estado de concurso preventivo.
-                    *   **Deuda AFIP:** Meses de atraso detectados en el pago de cargas sociales (aportes patronales).
-                    """)
+                 with st.expander("ℹ️ ¿Cómo leer estas mediciones? (Glosario Nosis)"):
+                     st.markdown("""
+                     *   **Score:** Puntaje estadístico que predice la probabilidad de pago. **>700** es Óptimo (Verde), **450-699** es Riesgo Medio (Amarillo), **<450** es Riesgo Alto (Rojo).
+                     *   **BCRA:** Situación en la Central de Deudores del Banco Central. **1** es Normal (Verde), **2** es Riesgo Potencial (Amarillo), **3, 4 y 5** indican riesgo alto/incobrable (Rojo).
+                     *   **Cheques:** Cantidad de cheques rechazados sin fondos en los últimos 24 meses.
+                     *   **Juicios:** Cantidad de juicios comerciales, ejecuciones fiscales o estado de concurso preventivo.
+                     *   **Deuda AFIP:** Meses de atraso detectados en el pago de cargas sociales (aportes patronales).
+                     *   **NSE (Nivel Socioeconómico):** Clasifica la capacidad de consumo y el poder adquisitivo estimado del deudor de la **A** a la **D2**. **Nota:** En el caso de **Personas Jurídicas (Empresas/Sociedades)**, esta métrica figurará como **NC (No Clasificado)** o **No registrado**, ya que es una segmentación socioeconómica diseñada de manera exclusiva para personas físicas.
+                     *   **Es Empleado Rel. Dep.:** Indica si el CUIT consultado registra aportes previsionales vigentes como empleado en relación de dependencia. Si es un trabajador independiente (Autónomo o Monotributista) o una **Persona Jurídica (Empresa)**, esta variable figurará siempre como **No**.
+                     *   **Empleador Principal / Empleador (No registrado):** Si la variable *"Es Empleado Rel. Dep."* es **No**, el empleador figurará como *"No registrado"*. Esto es totalmente normal y esperado para trabajadores independientes o en el caso de las empresas/sociedades que son empleadoras en sí mismas, no empleados.
+                     *   **Antigüedad Laboral (0 meses):** Representa el tiempo activo de empleo bajo relación de dependencia con el empleador actual. Si todos los consultados figuran con **0 meses**, se debe a que:
+                         1. El CUIT consultado es una **Persona Jurídica (Empresa/Sociedad)**: Las empresas no poseen una relación laboral de dependencia, por lo que su antigüedad laboral siempre es cero.
+                         2. El CUIT corresponde a un **Monotributista o Autónomo (Trabajador Independiente)**: Al no tener un empleador en relación de dependencia activa, no computan antigüedad laboral tradicional.
+                         3. El CUIT de la persona física no registra aportes de empleo dependiente activo en las bases de datos de Nosis (empleo informal, desempleado, jubilado o inactivo).
+                     """)
             else:
                 st.info("No se encontró registro histórico de Nosis para este cliente.")
                 
