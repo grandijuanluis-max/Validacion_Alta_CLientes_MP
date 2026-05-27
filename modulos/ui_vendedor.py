@@ -61,9 +61,8 @@ def render_vendedor_dashboard():
             'tipo_resp': '', 'giro_comercial': '', 'cuit_socio1': '', 'cuit_socio2': ''
         }
 
-    col_t1, col_t2 = st.columns([3, 1])
-    with col_t2:
-        st.session_state['voz_activada'] = st.toggle("🎙️ Alta Mágica por Voz", value=st.session_state['voz_activada'])
+    # Ocultar temporalmente el botón de Alta Mágica por Voz para versión casi definitiva
+    st.session_state['voz_activada'] = False
         
     if st.session_state['voz_activada']:
         st.info("🤖 **Alta Mágica Activada.** Toca el micrófono **una sola vez** y dictá todos los datos del cliente de corrido.")
