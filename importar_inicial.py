@@ -34,16 +34,17 @@ def importar():
     
     # 1. Actualizar secuencia_codigo
     print("\nActualizando secuencia_codigo en Supabase...")
-    # Primero buscamos el ID
     res_seq = supabase.table('secuencia_codigo').select('id').execute()
     if res_seq.data:
         id_seq = res_seq.data[0]['id']
-        supabase.table('secuencia_codigo').update({'ultimo_valor': max_codigo}).eq('id', id_seq).execute()
-        print(f"Secuencia actualizada con éxito. Próximo cliente será el {max_codigo + 1}.")
+        supabase.table('secuencia_codigo').update({'ultimo_valor': max(39999, max_codigo)}).eq('id', id_seq).execute()
+        proximo = max(40000, max_codigo + 1)
+        print(f"Secuencia actualizada con éxito. Próximo cliente será el {proximo}.")
     else:
         # Si por alguna razón no existía la fila, la creamos
-        supabase.table('secuencia_codigo').insert({'ultimo_valor': max_codigo}).execute()
-        print(f"Secuencia creada con éxito. Próximo cliente será el {max_codigo + 1}.")
+        supabase.table('secuencia_codigo').insert({'id': 1, 'ultimo_valor': max(39999, max_codigo)}).execute()
+        proximo = max(40000, max_codigo + 1)
+        print(f"Secuencia creada con éxito. Próximo cliente será el {proximo}.")
     
     # 2. Insertar Vendedores
     print("\nCreando usuarios para los Vendedores...")
