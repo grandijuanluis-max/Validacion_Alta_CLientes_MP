@@ -180,6 +180,8 @@ def render_clientes_pendientes():
         # Si hay una fila seleccionada, mostrar formulario completo
         if event and len(event.selection.rows) > 0:
             selected_index = event.selection.rows[0]
+            if selected_index >= len(df):
+                st.rerun()
             client_data = df.iloc[selected_index]
             
             st.markdown(f"### 📋 Detalle del Cliente: {client_data.get('nombre', '')}")
@@ -576,6 +578,8 @@ def render_clientes_rechazados():
         # Si hay una fila seleccionada, mostrar detalle en modo lectura
         if event and len(event.selection.rows) > 0:
             selected_index = event.selection.rows[0]
+            if selected_index >= len(df):
+                st.rerun()
             client_data = df.iloc[selected_index]
             
             st.markdown(f"### 📋 Detalle del Cliente Rechazado: {client_data.get('nombre', '')}")

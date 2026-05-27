@@ -131,6 +131,8 @@ def render_exportados_dashboard():
         
         if event and len(event.selection.rows) > 0:
             selected_index = event.selection.rows[0]
+            if selected_index >= len(filtered_df):
+                st.rerun()
             # Usar filtered_df en lugar de df para que el índice coincida con la selección
             client_data = filtered_df.iloc[selected_index]
             
