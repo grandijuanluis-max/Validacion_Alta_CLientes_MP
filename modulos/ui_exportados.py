@@ -398,6 +398,18 @@ def render_exportados_dashboard():
                 st.divider()
                 st.markdown("#### Observaciones del Vendedor")
                 st.text_area("Aclaraciones para Alta Temprana", value=str(val_doc), disabled=True)
+                
+            # --- VOLVER A EXPORTAR ---
+            st.divider()
+            st.markdown("#### 🔄 Acciones Especiales")
+            if st.button("🔄 Volver a Exportar este Cliente", type="primary", use_container_width=True, key=f"re_export_{cuit_seleccionado}"):
+                try:
+                    # Cambiar estado a 'A Exportar' en Supabase para permitir volver a exportar
+                    supabase.table('clientes_pendientes').update({'estado': 'A Exportar'}).eq('id', str(original_client_data['id'])).execute()
+                    st.success("🎉 Cliente marcado para volver a exportar de forma exitosa. Ahora figurará en la sección de 'Validación de Clientes'.")
+                    st.rerun()
+                except Exception as ex_err:
+                    st.error(f"Error al cambiar el estado del cliente: {ex_err}")
         else:
             st.info("👆 Selecciona un cliente de la tabla para ver todos los detalles históricos de su exportación.")
             

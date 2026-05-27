@@ -95,18 +95,28 @@ def render_validador_dashboard():
     if 'archivo_exportado' in st.session_state:
         import os
         if os.path.exists(st.session_state['archivo_exportado']):
-            st.success("¡Exportación completada exitosamente! El archivo está listo para descargar.")
-            with open(st.session_state['archivo_exportado'], "rb") as f:
-                st.download_button(
-                    label="⬇️ Descargar Clientes_web.dbi",
-                    data=f,
-                    file_name="Clientes_web.dbi",
-                    mime="application/octet-stream",
-                    type="primary"
-                )
-            if st.button("Cerrar este mensaje"):
-                del st.session_state['archivo_exportado']
-                st.rerun()
+            if st.session_state.get('descarga_completada', False):
+                st.info("ℹ️ El archivo ya fue descargado de forma exitosa. Se habilitará un nuevo botón de descarga la próxima vez que exportes nuevos clientes.")
+                if st.button("Cerrar este mensaje"):
+                    del st.session_state['archivo_exportado']
+                    st.session_state['descarga_completada'] = False
+                    st.rerun()
+            else:
+                st.success("¡Exportación completada exitosamente! El archivo está listo para descargar.")
+                with open(st.session_state['archivo_exportado'], "rb") as f:
+                    def registrar_descarga():
+                        st.session_state['descarga_completada'] = True
+                    st.download_button(
+                        label="⬇️ Descargar Clientes_web.dbi",
+                        data=f,
+                        file_name="Clientes_web.dbi",
+                        mime="application/octet-stream",
+                        type="primary",
+                        on_click=registrar_descarga
+                    )
+                if st.button("Cerrar este mensaje"):
+                    del st.session_state['archivo_exportado']
+                    st.rerun()
             st.divider()
             
     st.write("A continuación se listan los clientes cargados por los vendedores que esperan validación o exportación.")
@@ -498,6 +508,7 @@ def render_validador_dashboard():
                     supabase.table('secuencia_codigo').insert({'id': 1, 'ultimo_valor': ultimo_asignado}).execute()
                     
                 st.session_state['archivo_exportado'] = ruta_salida
+                st.session_state['descarga_completada'] = False
                 st.rerun()
             
     except Exception as e:

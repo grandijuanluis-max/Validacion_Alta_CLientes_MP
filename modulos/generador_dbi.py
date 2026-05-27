@@ -71,4 +71,19 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
         
     table.close()
     
+    # Generar 4 copias idénticas solicitadas en la carpeta data
+    import shutil
+    copias = [
+        "clientes_web0.dbi",
+        "clientes_web1.dbi",
+        "clientes_web10.dbi",
+        "clientes_we11.dbi"
+    ]
+    dir_salida = os.path.dirname(ruta_salida)
+    for c in copias:
+        ruta_c = os.path.join(dir_salida, c)
+        if os.path.exists(ruta_c):
+            os.remove(ruta_c)
+        shutil.copy2(ruta_salida, ruta_c)
+        
     return ruta_salida, codigo_actual
