@@ -483,7 +483,7 @@ def render_validador_dashboard():
             else:
                 secuencia_resp = supabase.table('secuencia_codigo').select('ultimo_valor').eq('id', 1).execute()
                 ultimo_valor = 0 if not secuencia_resp.data else secuencia_resp.data[0]['ultimo_valor']
-                numero_inicio = int(ultimo_valor) + 1
+                numero_inicio = max(40000, int(ultimo_valor) + 1)
                 
                 # Pasamos solo los clientes filtrados al generador
                 ruta_salida, nuevo_codigo_actual = generar_archivo_dbi(df_a_exportar, numero_inicio_codigo=numero_inicio)

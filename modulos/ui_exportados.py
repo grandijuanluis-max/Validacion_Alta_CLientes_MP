@@ -66,13 +66,13 @@ def render_exportados_dashboard():
             st.markdown("#### 🛡️ Análisis de Riesgo Crediticio (Histórico Nosis)")
             
             # Buscar en log de auditoría el último análisis de este CUIT
-            log_resp = supabase.table('log_auditoria_riesgo').select('*').eq('cuit_consultado', cuit_seleccionado).order('creado_en', desc=True).limit(1).execute()
+            log_resp = supabase.table('log_auditoria_riesgo').select('*').eq('cuit_consultado', cuit_seleccionado).order('fecha_hora', desc=True).limit(1).execute()
             
             if log_resp.data:
                 log_data = log_resp.data[0]
                 dictamen = log_data.get('dictamen_motor', '')
                 payload = log_data.get('payload_crudo', {})
-                fecha_log = log_data.get('creado_en', '').split('T')[0]
+                fecha_log = log_data.get('fecha_hora', '').split('T')[0]
                 
                 st.caption(f"Evaluado el: {fecha_log} (Datos recuperados de Auditoría)")
                 
