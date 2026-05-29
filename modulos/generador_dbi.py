@@ -12,6 +12,7 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
         "PAIS C(20); CONTACTO C(30); TELEFONO C(40); RUBRO C(30); "
         "TIPO_RESP N(5,1); TIPO_DOC N(2,0); CUIT_S1 N(12,0); CUIT_S2 N(12,0); "
         "TRANSPORTE N(2,0); CONDICION N(2,0); CATEGORIA C(10); LISTAPRE C(10); "
+        "VENDEDOR N(6,0); "
         "MEMO C(210)"
     )
     
@@ -48,6 +49,10 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
         try: tipo_doc = int(row.get('tipo_doc', 80))
         except: tipo_doc = 80
         
+        # Limpieza VENDEDOR
+        try: vendedor_num = int(float(row.get('vendedor', 0))) if row.get('vendedor') is not None else 0
+        except: vendedor_num = 0
+        
         registro = (
             codigo_actual,                            # CODIGO N(6,0)
             str(row.get('nombre', ''))[:30],            # NOMBRE C(30)
@@ -69,6 +74,7 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
             1,                                        # CONDICION N(2,0)
             "CLI_GRAL",                               # CATEGORIA C(10)
             "LISTA_UNIC",                             # LISTAPRE C(10)
+            vendedor_num,                             # VENDEDOR N(6,0)
             str(row.get('documento', ''))[:210]         # MEMO C(210)
         )
         table.append(registro)
@@ -90,5 +96,38 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
         if os.path.exists(ruta_c):
             os.remove(ruta_c)
         shutil.copy2(ruta_salida, ruta_c)
+        
+    # --- GENERAR DOMICILIO_ENTREGA.DBI ---
+    ruta_domicilios = os.path.join(dir_salida, "domicilio_entrega.dbi")
+    if os.path.exists(ruta_domicilios):
+        os.remove(ruta_domicilios)
+        
+    schema_dom = (
+        "CODIGO C(10); CLIENTE N(6,0); DOMICILIO C(50); C_POSTAL C(10); "
+        "LOCALIDAD C(35); PROVINCIA C(25); PAIS C(20); LOCAL_COT C(35)"
+    )
+    
+    table_dom = dbf.Table(ruta_domicilios, schema_dom, dbf_type='db3', codepage='cp1252')
+    table_dom.open(mode=dbf.READ_WRITE)
+    
+    codigo_actual = numero_inicio_codigo
+    for index, row in dataframe_clientes.iterrows():
+        # Máscara solicitada: 000000-000 (ej. si codigo es 4568 -> 004568-000)
+        codigo_mask = f"{codigo_actual:06d}-000"
+        
+        reg_dom = (
+            codigo_mask,                                       # CODIGO C(10)
+            codigo_actual,                                     # CLIENTE N(6,0)
+            str(row.get('domicilio_e', ''))[:50],              # DOMICILIO C(50)
+            str(row.get('cp_ent', ''))[:10],                   # C_POSTAL C(10)
+            str(row.get('local_ent', ''))[:35],                # LOCALIDAD C(35)
+            str(row.get('prov_ent', ''))[:25],                 # PROVINCIA C(25)
+            str(row.get('pais', ''))[:20],                     # PAIS C(20)
+            str(row.get('local_ent', ''))[:35]                 # LOCAL_COT C(35)
+        )
+        table_dom.append(reg_dom)
+        codigo_actual += 1
+        
+    table_dom.close()
         
     return ruta_salida, codigo_actual

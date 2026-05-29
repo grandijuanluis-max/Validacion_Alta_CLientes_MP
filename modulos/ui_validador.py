@@ -103,29 +103,37 @@ def render_validador_dashboard():
     if 'archivo_exportado' in st.session_state:
         import os
         if os.path.exists(st.session_state['archivo_exportado']):
-            if st.session_state.get('descarga_completada', False):
-                st.info("ℹ️ El archivo ya fue descargado de forma exitosa. Se habilitará un nuevo botón de descarga la próxima vez que exportes nuevos clientes.")
-                if st.button("Cerrar este mensaje", key="close_msg_download_done"):
-                    del st.session_state['archivo_exportado']
-                    st.session_state['descarga_completada'] = False
-                    st.rerun()
-            else:
-                st.success("¡Exportación completada exitosamente! El archivo está listo para descargar.")
+            st.success("¡Exportación completada exitosamente! Los archivos están listos para descargar.")
+            
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
                 with open(st.session_state['archivo_exportado'], "rb") as f:
-                    def registrar_descarga():
-                        st.session_state['descarga_completada'] = True
                     st.download_button(
                         label="⬇️ Descargar Clientes_web.dbi",
                         data=f,
                         file_name="Clientes_web.dbi",
                         mime="application/octet-stream",
                         type="primary",
-                        on_click=registrar_descarga,
-                        key="btn_download_dbi_ready"
+                        key="btn_download_dbi_ready",
+                        use_container_width=True
                     )
-                if st.button("Cerrar este mensaje", key="close_msg_download_pending"):
-                    del st.session_state['archivo_exportado']
-                    st.rerun()
+            with col_dl2:
+                path_dom = os.path.join(os.path.dirname(st.session_state['archivo_exportado']), "domicilio_entrega.dbi")
+                if os.path.exists(path_dom):
+                    with open(path_dom, "rb") as f_dom:
+                        st.download_button(
+                            label="⬇️ Descargar Domicilio_Entrega.dbi",
+                            data=f_dom,
+                            file_name="domicilio_entrega.dbi",
+                            mime="application/octet-stream",
+                            type="primary",
+                            key="btn_download_dom_ready",
+                            use_container_width=True
+                        )
+            
+            if st.button("Cerrar este mensaje", key="close_msg_download_pending", use_container_width=True):
+                del st.session_state['archivo_exportado']
+                st.rerun()
             st.divider()
             
     if supabase is None:

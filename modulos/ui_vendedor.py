@@ -393,6 +393,7 @@ def render_vendedor_dashboard():
                         "cuit_socio2": cuit_socio2.replace('-', '').strip() if cuit_socio2 else "",
                         "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
                         "creado_por": st.session_state.get('user_id'),
+                        "vendedor": st.session_state.get('codigo_vendedor'),
                         "estado": "Pendiente",
                         "tipo_resp": codigo_resp,
                         "tipo_doc": codigo_tdoc,
