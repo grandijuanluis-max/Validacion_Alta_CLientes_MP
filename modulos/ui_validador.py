@@ -91,6 +91,14 @@ def mostrar_modal_socio(cuit_socio, rol_socio):
 def render_validador_dashboard():
     st.header("✅ Validación de Clientes")
     
+    # Mostrar notificaciones persistentes que sobreviven a st.rerun()
+    if 'validador_success' in st.session_state:
+        st.success(st.session_state['validador_success'])
+        del st.session_state['validador_success']
+    if 'validador_warning' in st.session_state:
+        st.warning(st.session_state['validador_warning'])
+        del st.session_state['validador_warning']
+    
     # Manejar estado de descarga
     if 'archivo_exportado' in st.session_state:
         import os
@@ -181,6 +189,8 @@ def render_clientes_pendientes():
         if event and len(event.selection.rows) > 0:
             selected_index = event.selection.rows[0]
             if selected_index >= len(df):
+                if "tabla_pendientes" in st.session_state:
+                    del st.session_state["tabla_pendientes"]
                 st.rerun()
             client_data = df.iloc[selected_index]
             
@@ -484,19 +494,23 @@ def render_clientes_pendientes():
             if col_btn1.button("Guardar Cambios Manuales", use_container_width=True, key=f"btn_save_{client_id}"):
                 datos_actualizados['estado'] = 'Modificado'
                 supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
-                st.success("Datos guardados. Estado cambiado a Modificado.")
+                st.session_state['validador_success'] = "Datos guardados. Estado cambiado a Modificado."
                 st.rerun()
                 
             if col_btn2.button("Marcar para Exportar (Aprobado)", type="primary", use_container_width=True, key=f"btn_approve_{client_id}"):
                 datos_actualizados['estado'] = 'A Exportar'
                 supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
-                st.success(f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente.")
+                st.session_state['validador_success'] = f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente."
+                if "tabla_pendientes" in st.session_state:
+                    del st.session_state["tabla_pendientes"]
                 st.rerun()
 
             if col_btn3.button("🛑 Rechazar Alta", type="secondary", use_container_width=True, key=f"btn_reject_{client_id}"):
                 datos_actualizados['estado'] = 'Validado'  # Guardamos como 'Validado' por la restricción CHECK en Supabase, se mostrará como 'Rechazado' en la UI
                 supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
-                st.warning(f"El alta del cliente {client_data.get('nombre', '')} ha sido rechazada.")
+                st.session_state['validador_warning'] = f"El alta del cliente {client_data.get('nombre', '')} ha sido rechazada."
+                if "tabla_pendientes" in st.session_state:
+                    del st.session_state["tabla_pendientes"]
                 st.rerun()
                 
         else:
@@ -579,6 +593,8 @@ def render_clientes_rechazados():
         if event and len(event.selection.rows) > 0:
             selected_index = event.selection.rows[0]
             if selected_index >= len(df):
+                if "tabla_rechazados" in st.session_state:
+                    del st.session_state["tabla_rechazados"]
                 st.rerun()
             client_data = df.iloc[selected_index]
             
@@ -617,34 +633,34 @@ def render_clientes_rechazados():
                     
                 st.markdown("##### 🚦 Semáforos Principales")
                 col_n1, col_n2, col_n3, col_n4, col_n5 = st.columns(5)
-                col_n1.metric(f"{pinta_semaforo(semaforos.get('score'))} Score", payload.get('score_riesgo', 850), key=f"r_score_{client_data['id']}")
-                col_n2.metric(f"{pinta_semaforo(semaforos.get('bcra'))} BCRA", payload.get('calificacion_bcra', 1), key=f"r_bcra_{client_data['id']}")
-                col_n3.metric(f"{pinta_semaforo(semaforos.get('cheques'))} Cheques", payload.get('cheques_rechazados', 0), key=f"r_cheques_{client_data['id']}")
-                col_n4.metric(f"{pinta_semaforo(semaforos.get('juicios'))} Juicios", payload.get('juicios_concursos', 0), key=f"r_juicios_{client_data['id']}")
-                col_n5.metric(f"{pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get('baches_afip_meses', 0), key=f"r_afip_{client_data['id']}")
+                col_n1.metric(f"{pinta_semaforo(semaforos.get('score'))} Score", payload.get('score_riesgo', 850))
+                col_n2.metric(f"{pinta_semaforo(semaforos.get('bcra'))} BCRA", payload.get('calificacion_bcra', 1))
+                col_n3.metric(f"{pinta_semaforo(semaforos.get('cheques'))} Cheques", payload.get('cheques_rechazados', 0))
+                col_n4.metric(f"{pinta_semaforo(semaforos.get('juicios'))} Juicios", payload.get('juicios_concursos', 0))
+                col_n5.metric(f"{pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get('baches_afip_meses', 0))
                 
                 # Nuevas variables estratégicas de Nosis en un contenedor visualmente agradable
                 st.markdown("##### 📊 Inteligencia Crediticia y Estabilidad (Nosis Ampliado)")
                 
                 col_e1, col_e2, col_e3, col_e4 = st.columns(4)
-                col_e1.metric("Nivel Socioeconómico (NSE)", payload.get('nse', 'No registrado'), key=f"r_nse_{client_data['id']}")
+                col_e1.metric("Nivel Socioeconómico (NSE)", payload.get('nse', 'No registrado'))
                 
                 antiguedad = payload.get('antiguedad_laboral', 0)
-                col_e2.metric("Antigüedad AFIP/Monotributo", f"{antiguedad} meses" if antiguedad else "No registrado", key=f"r_antig_{client_data['id']}")
+                col_e2.metric("Antigüedad AFIP/Monotributo", f"{antiguedad} meses" if antiguedad else "No registrado")
                 
                 deuda = payload.get('deuda_total', 0)
-                col_e3.metric("Deuda Bancaria Total", f"$ {deuda:,.2f}" if deuda else "$ 0.00", key=f"r_deuda_{client_data['id']}")
+                col_e3.metric("Deuda Bancaria Total", f"$ {deuda:,.2f}" if deuda else "$ 0.00")
                 
                 comp = payload.get('compromiso_mensual', 0)
-                col_e4.metric("Compromiso Mensual", f"$ {comp:,.2f}" if comp else "$ 0.00", key=f"r_comp_{client_data['id']}")
+                col_e4.metric("Compromiso Mensual", f"$ {comp:,.2f}" if comp else "$ 0.00")
                 
                 col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-                col_p1.metric("Es Empleado Rel. Dep.", payload.get('es_empleado', 'No'), key=f"r_emp_{client_data['id']}")
-                col_p2.metric("Bancos Acreedores", payload.get('cant_bancos', 0), key=f"r_banks_{client_data['id']}")
-                col_p3.metric("Consultas CUIT (12m)", payload.get('consultas_12m', 0), key=f"r_queries_{client_data['id']}")
+                col_p1.metric("Es Empleado Rel. Dep.", payload.get('es_empleado', 'No'))
+                col_p2.metric("Bancos Acreedores", payload.get('cant_bancos', 0))
+                col_p3.metric("Consultas CUIT (12m)", payload.get('consultas_12m', 0))
                 
                 emp_rz = payload.get('empleador', 'No registrado')
-                col_p4.metric("Empleador Principal", emp_rz[:20] + "..." if len(emp_rz) > 20 else emp_rz, key=f"r_empl_{client_data['id']}")
+                col_p4.metric("Empleador Principal", emp_rz[:20] + "..." if len(emp_rz) > 20 else emp_rz)
                 
                 st.markdown("##### 🚨 Alertas Impositivas y Comercial")
                 col_a1, col_a2, col_a3 = st.columns(3)
@@ -654,9 +670,9 @@ def render_clientes_rechazados():
                         return f"⚠️ {val}"
                     return f"✅ {val}"
                 
-                col_a1.metric("Facturas Apócrifas AFIP", format_alerta(payload.get('facturas_apocrifas', 'No')), key=f"r_apocrifas_{client_data['id']}")
-                col_a2.metric("Deudas Fiscales AFIP", format_alerta(payload.get('deudas_fiscales', 'No')), key=f"r_dfiscales_{client_data['id']}")
-                col_a3.metric("Es Moroso Comercial", format_alerta(payload.get('es_moroso', 'No')), key=f"r_moroso_{client_data['id']}")
+                col_a1.metric("Facturas Apócrifas AFIP", format_alerta(payload.get('facturas_apocrifas', 'No')))
+                col_a2.metric("Deudas Fiscales AFIP", format_alerta(payload.get('deudas_fiscales', 'No')))
+                col_a3.metric("Es Moroso Comercial", format_alerta(payload.get('es_moroso', 'No')))
                 
                 # Botón de Descarga del Reporte PDF
                 st.markdown("##### 📄 Exportación de Reporte Oficial")
@@ -843,7 +859,9 @@ def render_clientes_rechazados():
             st.markdown("#### Acciones para Clientes Rechazados")
             if st.button("🔄 Recuperar y volver a evaluar", type="primary", use_container_width=True, key=f"btn_recover_{client_id}"):
                 supabase.table('clientes_pendientes').update({'estado': 'Pendiente'}).eq('id', str(client_data['id'])).execute()
-                st.success(f"El cliente {client_data.get('nombre', '')} ha sido recuperado y devuelto a la lista de pendientes.")
+                st.session_state['validador_success'] = f"El cliente {client_data.get('nombre', '')} ha sido recuperado y devuelto a la lista de pendientes."
+                if "tabla_rechazados" in st.session_state:
+                    del st.session_state["tabla_rechazados"]
                 st.rerun()
                 
         else:
