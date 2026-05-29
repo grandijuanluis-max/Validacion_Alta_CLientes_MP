@@ -11,6 +11,7 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
         "DOMICILIO C(50); LOCALIDAD C(35); C_POSTAL C(50); PROVINCIA C(25); "
         "PAIS C(20); CONTACTO C(30); TELEFONO C(40); RUBRO C(30); "
         "TIPO_RESP N(5,1); TIPO_DOC N(2,0); CUIT_S1 N(12,0); CUIT_S2 N(12,0); "
+        "TRANSPORTE N(2,0); CONDICION N(2,0); CATEGORIA C(10); LISTAPRE C(10); "
         "MEMO C(210)"
     )
     
@@ -64,6 +65,10 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
             tipo_doc,                                 # TIPO_DOC N(2,0)
             cuit_s1_num,                              # CUIT_S1 N(12,0)
             cuit_s2_num,                              # CUIT_S2 N(12,0)
+            1,                                        # TRANSPORTE N(2,0)
+            1,                                        # CONDICION N(2,0)
+            "CLI_GRAL",                               # CATEGORIA C(10)
+            "LISTA_UNIC",                             # LISTAPRE C(10)
             str(row.get('documento', ''))[:210]         # MEMO C(210)
         )
         table.append(registro)

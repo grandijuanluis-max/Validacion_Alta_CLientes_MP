@@ -466,6 +466,7 @@ def render_clientes_pendientes():
             col_c1, col_c2 = st.columns(2)
             contacto = col_c1.text_input("Persona de Contacto", value=client_data.get('contacto', ''), disabled=not edit_mode, key=f"contacto_{client_id}")
             telefono = col_c2.text_input("Teléfono", value=client_data.get('telefono', ''), disabled=not edit_mode, key=f"telefono_{client_id}")
+            referencia = st.text_input("Horarios y días de visita (Referencia)", value=client_data.get('referencia', '') if client_data.get('referencia') else "", disabled=not edit_mode, key=f"referencia_{client_id}")
             
             st.divider()
             
@@ -488,7 +489,8 @@ def render_clientes_pendientes():
                 'local_ent': loc_e,
                 'prov_ent': prov_e,
                 'contacto': contacto,
-                'telefono': telefono
+                'telefono': telefono,
+                'referencia': referencia
             }
             
             if col_btn1.button("Guardar Cambios Manuales", use_container_width=True, key=f"btn_save_{client_id}"):
@@ -847,6 +849,7 @@ def render_clientes_rechazados():
             col_c1, col_c2 = st.columns(2)
             col_c1.text_input("Persona de Contacto", value=client_data.get('contacto', ''), disabled=True, key=f"r_contacto_val_{client_id}")
             col_c2.text_input("Teléfono", value=client_data.get('telefono', ''), disabled=True, key=f"r_telefono_val_{client_id}")
+            st.text_input("Horarios y días de visita (Referencia)", value=client_data.get('referencia', '') if client_data.get('referencia') else "", disabled=True, key=f"r_referencia_val_{client_id}")
             
             st.divider()
             

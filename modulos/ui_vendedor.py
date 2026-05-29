@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import re
 from modulos.api_afip import consultar_cuit_afip
 from modulos.db import supabase
 
@@ -260,9 +261,13 @@ def render_vendedor_dashboard():
                     break
         giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles, index=idx_giro)
         
+        # Determinar si el CUIT de Socio 1 es de carácter obligatorio (para SA o SRL)
+        es_sa_or_srl = bool(re.search(r'\b(SA|SRL)\b', nombre.replace('.', ''), re.IGNORECASE))
+        label_socio1 = "CUIT Socio 1 *" if es_sa_or_srl else "CUIT Socio 1 (Opcional)"
+        
         col_s1, col_s2 = st.columns(2)
         with col_s1:
-            cuit_socio1 = st.text_input("CUIT Socio 1 (Opcional)", value=st.session_state['voz_datos'].get('cuit_socio1', ''))
+            cuit_socio1 = st.text_input(label_socio1, value=st.session_state['voz_datos'].get('cuit_socio1', ''))
         with col_s2:
             cuit_socio2 = st.text_input("CUIT Socio 2 (Opcional)", value=st.session_state['voz_datos'].get('cuit_socio2', ''))
             
@@ -328,6 +333,8 @@ def render_vendedor_dashboard():
             
         observaciones = st.text_area("Observaciones para el Validador (Opcional)", value=st.session_state['voz_datos'].get('observaciones', ''), help="Dato informativo o aclaratorio para tener en cuenta en el alta temprana.")
         
+        referencia_input = st.text_input("Horarios y días de visita (Referencia)", value="", help="Días y horarios recomendados para visitas o entregas.")
+        
         submit = st.button("Guardar y Enviar a Validación", type="primary", use_container_width=True)
         
         if submit:
@@ -350,6 +357,9 @@ def render_vendedor_dashboard():
             if giro_comercial == "Seleccione un ramo...": faltantes.append("Giro Comercial (Rubro)")
             
             if tresp_sel == "Seleccionar...": faltantes.append("Tipo Responsable")
+            
+            if es_sa_or_srl and not cuit_socio1.strip():
+                faltantes.append("CUIT Socio 1 (Obligatorio para SA/SRL)")
             
             if faltantes:
                 st.error(f"❌ Error: Faltan completar los siguientes campos obligatorios: {', '.join(faltantes)}")
@@ -389,7 +399,8 @@ def render_vendedor_dashboard():
                         "actividad": acti_input,
                         "cod_acti": codacti_input,
                         "antiguedad": ant_input,
-                        "mes_cierre": mes_input
+                        "mes_cierre": mes_input,
+                        "referencia": referencia_input
                     }
                     response = supabase.table('clientes_pendientes').insert(data).execute()
                     st.success("¡Cliente guardado exitosamente y en espera de validación!")
