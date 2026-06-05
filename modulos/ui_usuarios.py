@@ -35,10 +35,14 @@ def render_usuarios_dashboard():
         with col_btn1:
             if st.button("➕ Alta de Usuario", use_container_width=True, type="primary" if st.session_state['usuario_action_mode'] == 'Alta' else "secondary"):
                 st.session_state['usuario_action_mode'] = 'Alta'
+                if "modificar_usuario_select" in st.session_state:
+                    del st.session_state["modificar_usuario_select"]
                 st.rerun()
         with col_btn2:
             if st.button("✏️ Modificar Usuario", use_container_width=True, type="primary" if st.session_state['usuario_action_mode'] == 'Modificar' else "secondary"):
                 st.session_state['usuario_action_mode'] = 'Modificar'
+                if "modificar_usuario_select" in st.session_state:
+                    del st.session_state["modificar_usuario_select"]
                 st.rerun()
                 
         st.write("")
@@ -96,7 +100,8 @@ def render_usuarios_dashboard():
                 "Selecciona un usuario para modificar",
                 user_list,
                 index=None,
-                placeholder="-- Selecciona un usuario --"
+                placeholder="-- Selecciona un usuario --",
+                key="modificar_usuario_select"
             )
             
             if selected_email:
@@ -148,6 +153,8 @@ def render_usuarios_dashboard():
                             try:
                                 supabase.table('usuarios').update(update_data).eq('id', user_data['id']).execute()
                                 st.success("Datos del usuario y permisos actualizados correctamente.")
+                                if "modificar_usuario_select" in st.session_state:
+                                    del st.session_state["modificar_usuario_select"]
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error al actualizar el usuario. Detalle: {e}")
