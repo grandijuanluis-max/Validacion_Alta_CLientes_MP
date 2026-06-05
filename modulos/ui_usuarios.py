@@ -91,10 +91,10 @@ def render_usuarios_dashboard():
         
         else:
             st.markdown("### ✏️ Modificar Usuario Existente")
-            user_list = df['email'].tolist()
-            selected_email = st.selectbox("Selecciona un usuario para modificar", user_list)
+            user_list = ["-- Selecciona un usuario --"] + df['email'].tolist()
+            selected_email = st.selectbox("Selecciona un usuario para modificar", user_list, index=0)
             
-            if selected_email:
+            if selected_email and selected_email != "-- Selecciona un usuario --":
                 user_data = df[df['email'] == selected_email].iloc[0]
                 
                 with st.form("form_modificar_usuario"):
