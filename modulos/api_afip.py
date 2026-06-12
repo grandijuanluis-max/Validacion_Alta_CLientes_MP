@@ -319,12 +319,14 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
                         for imp in root_a5.iter():
                             if 'impuesto' in imp.tag:
                                 id_imp = get_text(imp, 'idImpuesto')
-                                if id_imp in ['20', '21', '22']:
-                                    tiene_mono = True
-                                elif id_imp == '32':
-                                    tiene_exento = True
-                                elif id_imp in ['30', '10', '11']:
-                                    tiene_ri = True
+                                estado_imp = get_text(imp, 'estadoImpuesto')
+                                if estado_imp == 'AC':
+                                    if id_imp in ['20', '21', '22']:
+                                        tiene_mono = True
+                                    elif id_imp == '32':
+                                        tiene_exento = True
+                                    elif id_imp == '30':
+                                        tiene_ri = True
                                     
                         if tiene_exento:
                             datos["tipo_resp_desc"] = "Exento"
@@ -335,6 +337,19 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
                         elif tiene_ri:
                             datos["tipo_resp_desc"] = "Responsable Inscripto"
                             datos["tipo_resp_codigo"] = "1.0"
+                        else:
+                            registra_ganancias = False
+                            for imp in root_a5.iter():
+                                if 'impuesto' in imp.tag:
+                                    id_imp = get_text(imp, 'idImpuesto')
+                                    estado_imp = get_text(imp, 'estadoImpuesto')
+                                    if id_imp in ['10', '11'] and estado_imp == 'AC':
+                                        registra_ganancias = True
+                                        break
+                            if registra_ganancias:
+                                datos["tipo_resp_error"] = "Registra Ganancias activo pero no IVA ni Monotributo."
+                            else:
+                                datos["tipo_resp_error"] = "No se encontraron impuestos de IVA o Monotributo activos."
                 else:
                     datos["tipo_resp_error"] = f"Error del servidor de constancias de AFIP: {resp_a5.status_code}"
             except Exception as e5:
