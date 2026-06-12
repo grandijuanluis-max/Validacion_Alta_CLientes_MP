@@ -81,6 +81,8 @@ def render_usuarios_dashboard():
             if submit_nuevo:
                 if not nuevo_email or not nuevo_password:
                     st.error("El email y la contraseña son obligatorios.")
+                elif nuevo_email.strip().lower() == 'grandijuanluis@gmail.com' or (nuevo_usuario and nuevo_usuario.strip().lower() == 'juanluis'):
+                    st.error("No se puede registrar un usuario con el correo o nombre de usuario de JuanLuis.")
                 else:
                     insert_data = {
                         "email": nuevo_email,
@@ -131,6 +133,19 @@ def render_usuarios_dashboard():
             
             if selected_email:
                 user_data = df[df['email'] == selected_email].iloc[0]
+                
+                # Validación de seguridad: Solo JuanLuis puede modificar a JuanLuis
+                is_target_juanluis = (user_data['email'] == 'grandijuanluis@gmail.com' or user_data.get('usuario') == 'JuanLuis')
+                is_current_juanluis = (st.session_state.get('user_email') == 'grandijuanluis@gmail.com')
+                
+                if is_target_juanluis and not is_current_juanluis:
+                    st.warning("⚠️ El perfil y permisos del usuario **JuanLuis** sólo pueden ser modificados por él mismo.")
+                    if st.button("❌ Cancelar y Volver", use_container_width=True):
+                        if "modificar_usuario_select" in st.session_state:
+                            del st.session_state["modificar_usuario_select"]
+                        st.session_state['usuario_action_mode'] = None
+                        st.rerun()
+                    return
                 
                 with st.form("form_modificar_usuario"):
                     st.write(f"Editando perfil de: **{user_data['email']}**")
