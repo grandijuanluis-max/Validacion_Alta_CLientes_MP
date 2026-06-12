@@ -36,6 +36,21 @@ def buscar_cp(localidad, provincia):
         print(f"Error buscando CP en Supabase: {e}")
         return []
 
+def cuit_existe_en_db(cuit):
+    if not cuit or supabase is None:
+        return None
+    cuit_limpio = "".join(filter(str.isdigit, str(cuit)))
+    if not cuit_limpio:
+        return None
+    try:
+        response = supabase.table('clientes_pendientes').select('id, nombre, estado').eq('cuit', cuit_limpio).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Error buscando CUIT en DB: {e}")
+        return None
+
 def render_vendedor_dashboard():
     st.header("🏢 Alta de Nuevo Cliente")
     
@@ -148,44 +163,78 @@ def render_vendedor_dashboard():
                 if not cuit_busqueda:
                     st.warning("Escribe un CUIT primero.")
                 else:
-                    with st.spinner("Consultando Padrón AFIP..."):
-                        try:
-                            # Hacemos la consulta a AFIP
-                            resultado = consultar_cuit_afip(cuit_busqueda)
-                            
-                            if "error" in resultado:
-                                # Fallo de AFIP (Caída o CUIT Inválido)
-                                st.error(f"⚠️ Atención: {resultado['error']}")
-                                st.warning("AFIP no responde o el CUIT es incorrecto. Puedes reintentar o usar la carga manual.")
-                            else:
-                                # Éxito en AFIP
-                                st.success(f"¡Cliente Encontrado! (Estado: {resultado.get('estado', 'Desconocido')})")
-                                st.session_state['afip_data']['cuit'] = cuit_busqueda
-                                st.session_state['afip_data']['nombre'] = resultado.get('nombre', '')
-                                st.session_state['afip_data']['domicilio_f'] = resultado.get('domicilio_fiscal', '')
-                                st.session_state['afip_data']['localidad'] = resultado.get('localidad', '')
-                                st.session_state['afip_data']['provincia'] = resultado.get('provincia', '')
-                                st.session_state['afip_data']['estado'] = resultado.get('estado', '')
-                                st.session_state['afip_data']['tipo_doc_desc'] = resultado.get('tipo_doc_desc', '')
-                                st.session_state['afip_data']['tipo_doc_codigo'] = resultado.get('tipo_doc_codigo', '')
-                                st.session_state['afip_data']['tipo_resp_desc'] = resultado.get('tipo_resp_desc', '')
-                                st.session_state['afip_data']['tipo_resp_codigo'] = resultado.get('tipo_resp_codigo', '')
-                                st.session_state['afip_data']['tipo_resp_error'] = resultado.get('tipo_resp_error', '')
-                                st.session_state['afip_data']['actividad'] = resultado.get('actividad', '')
-                                st.session_state['afip_data']['cod_acti'] = resultado.get('cod_acti', '')
-                                st.session_state['afip_data']['antiguedad'] = resultado.get('antiguedad', '')
-                                st.session_state['afip_data']['mes_cierre'] = resultado.get('mes_cierre', '')
-                                st.session_state['modo_carga'] = 'afip'
-                                st.rerun()
-                        except Exception as e:
-                            st.error("Error al conectar con AFIP. El servicio podría estar temporalmente caído.")
-                            st.warning("Por favor, utiliza la Carga Manual.")
-                            
+                    cuit_limpio = "".join(filter(str.isdigit, cuit_busqueda))
+                    existente = cuit_existe_en_db(cuit_limpio)
+                    if existente:
+                        st.markdown(
+                            f"""
+                            <div style="background-color: #fce8e6; border-left: 6px solid #d93025; padding: 16px; border-radius: 8px; margin-bottom: 15px;">
+                                <h4 style="color: #c5221f; margin: 0 0 8px 0; font-weight: bold; font-size: 18px;">🛑 CUIT YA INGRESADO</h4>
+                                <p style="color: #601e1a; margin: 0; font-size: 14px;">
+                                    El CUIT <b>{cuit_limpio}</b> ya se encuentra registrado en el sistema.
+                                    <br>• Razón Social: <b>{existente.get('nombre', 'Desconocida')}</b>
+                                    <br>• Estado Actual: <b>{existente.get('estado', 'Pendiente')}</b>
+                                </p>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        with st.spinner("Consultando Padrón AFIP..."):
+                            try:
+                                # Hacemos la consulta a AFIP
+                                resultado = consultar_cuit_afip(cuit_busqueda)
+                                
+                                if "error" in resultado:
+                                    # Fallo de AFIP (Caída o CUIT Inválido)
+                                    st.error(f"⚠️ Atención: {resultado['error']}")
+                                    st.warning("AFIP no responde o el CUIT es incorrecto. Puedes reintentar o usar la carga manual.")
+                                else:
+                                    # Éxito en AFIP
+                                    st.success(f"¡Cliente Encontrado! (Estado: {resultado.get('estado', 'Desconocido')})")
+                                    st.session_state['afip_data']['cuit'] = cuit_busqueda
+                                    st.session_state['afip_data']['nombre'] = resultado.get('nombre', '')
+                                    st.session_state['afip_data']['domicilio_f'] = resultado.get('domicilio_fiscal', '')
+                                    st.session_state['afip_data']['localidad'] = resultado.get('localidad', '')
+                                    st.session_state['afip_data']['provincia'] = resultado.get('provincia', '')
+                                    st.session_state['afip_data']['estado'] = resultado.get('estado', '')
+                                    st.session_state['afip_data']['tipo_doc_desc'] = resultado.get('tipo_doc_desc', '')
+                                    st.session_state['afip_data']['tipo_doc_codigo'] = resultado.get('tipo_doc_codigo', '')
+                                    st.session_state['afip_data']['tipo_resp_desc'] = resultado.get('tipo_resp_desc', '')
+                                    st.session_state['afip_data']['tipo_resp_codigo'] = resultado.get('tipo_resp_codigo', '')
+                                    st.session_state['afip_data']['tipo_resp_error'] = resultado.get('tipo_resp_error', '')
+                                    st.session_state['afip_data']['actividad'] = resultado.get('actividad', '')
+                                    st.session_state['afip_data']['cod_acti'] = resultado.get('cod_acti', '')
+                                    st.session_state['afip_data']['antiguedad'] = resultado.get('antiguedad', '')
+                                    st.session_state['afip_data']['mes_cierre'] = resultado.get('mes_cierre', '')
+                                    st.session_state['modo_carga'] = 'afip'
+                                    st.rerun()
+                            except Exception as e:
+                                st.error("Error al conectar con AFIP. El servicio podría estar temporalmente caído.")
+                                st.warning("Por favor, utiliza la Carga Manual.")
+                                
         with col2:
             if st.button("📝 Cargar Manualmente (Sin AFIP)", use_container_width=True):
-                st.session_state['afip_data']['cuit'] = cuit_busqueda # Llevamos el CUIT que haya tipeado, si lo hizo
-                st.session_state['modo_carga'] = 'manual'
-                st.rerun()
+                cuit_limpio = "".join(filter(str.isdigit, cuit_busqueda))
+                existente = cuit_existe_en_db(cuit_limpio)
+                if existente:
+                    st.markdown(
+                        f"""
+                        <div style="background-color: #fce8e6; border-left: 6px solid #d93025; padding: 16px; border-radius: 8px; margin-bottom: 15px;">
+                            <h4 style="color: #c5221f; margin: 0 0 8px 0; font-weight: bold; font-size: 18px;">🛑 CUIT YA INGRESADO</h4>
+                            <p style="color: #601e1a; margin: 0; font-size: 14px;">
+                                El CUIT <b>{cuit_limpio}</b> ya se encuentra registrado en el sistema.
+                                <br>• Razón Social: <b>{existente.get('nombre', 'Desconocida')}</b>
+                                <br>• Estado Actual: <b>{existente.get('estado', 'Pendiente')}</b>
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.session_state['afip_data']['cuit'] = cuit_busqueda # Llevamos el CUIT que haya tipeado, si lo hizo
+                    st.session_state['modo_carga'] = 'manual'
+                    st.rerun()
 
     # PASO 2: Formulario Completo
     else:
@@ -207,6 +256,26 @@ def render_vendedor_dashboard():
         
         with col1:
             cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'], disabled=is_afip)
+            
+        cuit_limpio = "".join(filter(str.isdigit, cuit))
+        existente = cuit_existe_en_db(cuit_limpio)
+        cuit_duplicado = False
+        if existente:
+            cuit_duplicado = True
+            st.markdown(
+                f"""
+                <div style="background-color: #fce8e6; border-left: 6px solid #d93025; padding: 16px; border-radius: 8px; margin-top: 10px; margin-bottom: 15px; width: 100%;">
+                    <h4 style="color: #c5221f; margin: 0 0 8px 0; font-weight: bold; font-size: 16px;">🛑 CUIT YA INGRESADO DETECTADO</h4>
+                    <p style="color: #601e1a; margin: 0; font-size: 14px;">
+                        El CUIT <b>{cuit_limpio}</b> ya se encuentra registrado en el sistema.
+                        <br>• Razón Social: <b>{existente.get('nombre', 'Desconocida')}</b>
+                        <br>• Estado Actual: <b>{existente.get('estado', 'Pendiente')}</b>
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
         with col2:
             nombre = st.text_input("NOMBRE (Razón Social) *", value=st.session_state['afip_data']['nombre'], disabled=is_afip)
             
@@ -273,7 +342,12 @@ def render_vendedor_dashboard():
         giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles, index=idx_giro)
         
         # Determinar si el CUIT de Socio 1 es de carácter obligatorio (para SA o SRL)
-        es_sa_or_srl = bool(re.search(r'\b(SA|SRL)\b', nombre.replace('.', ''), re.IGNORECASE))
+        nombre_norm = re.sub(r'\s+', ' ', nombre.replace('.', '').replace(',', '').strip().upper())
+        es_sa_or_srl = bool(re.search(
+            r'\b(SA|SRL|S\s+A|S\s+R\s+L|SOCIEDAD\s+ANONIMA|SOCIEDAD\s+AN[OÓ]NIMA|SOCIEDAD\s+DE\s+RESPONSABILIDAD\s+LIMITADA)\b',
+            nombre_norm,
+            re.IGNORECASE
+        ))
         label_socio1 = "CUIT Socio 1 *" if es_sa_or_srl else "CUIT Socio 1 (Opcional)"
         
         col_s1, col_s2 = st.columns(2)
@@ -369,10 +443,27 @@ def render_vendedor_dashboard():
             
             if tresp_sel == "Seleccionar...": faltantes.append("Tipo Responsable")
             
-            if es_sa_or_srl and not cuit_socio1.strip():
-                faltantes.append("CUIT Socio 1 (Obligatorio para SA/SRL)")
+            cuit_s1_digits = "".join(filter(str.isdigit, cuit_socio1))
+            cuit_s2_digits = "".join(filter(str.isdigit, cuit_socio2))
             
-            if faltantes:
+            if es_sa_or_srl:
+                if not cuit_s1_digits:
+                    faltantes.append("CUIT Socio 1 (Obligatorio para SA/SRL)")
+                elif len(cuit_s1_digits) != 11:
+                    faltantes.append("CUIT Socio 1 (Debe tener exactamente 11 dígitos)")
+            else:
+                if cuit_socio1.strip() and len(cuit_s1_digits) != 11:
+                    faltantes.append("CUIT Socio 1 (Debe tener exactamente 11 dígitos)")
+                    
+            if cuit_socio2.strip() and len(cuit_s2_digits) != 11:
+                faltantes.append("CUIT Socio 2 (Debe tener exactamente 11 dígitos)")
+            
+            cuit_limpio = "".join(filter(str.isdigit, cuit))
+            existente_submit = cuit_existe_en_db(cuit_limpio)
+            
+            if existente_submit:
+                st.error(f"❌ Error crítico: El CUIT {cuit_limpio} ya está registrado en el sistema para '{existente_submit.get('nombre', 'Desconocido')}' en estado '{existente_submit.get('estado', 'Pendiente')}'. No se permite registrar CUITs duplicados.")
+            elif faltantes:
                 st.error(f"❌ Error: Faltan completar los siguientes campos obligatorios: {', '.join(faltantes)}")
             elif supabase is None:
                 st.error("No hay conexión a la base de datos configurada.")

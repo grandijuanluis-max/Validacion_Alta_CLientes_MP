@@ -353,9 +353,20 @@ def render_clientes_pendientes():
             val_socio1 = _limpiar_cuit_db(client_data.get('cuit_socio1', ''))
             val_socio2 = _limpiar_cuit_db(client_data.get('cuit_socio2', ''))
             
+            # Determinar si es SA o SRL de forma robusta
+            import re
+            nombre_cliente = client_data.get('nombre', '')
+            nombre_norm = re.sub(r'\s+', ' ', nombre_cliente.replace('.', '').replace(',', '').strip().upper())
+            es_sa_or_srl = bool(re.search(
+                r'\b(SA|SRL|S\s+A|S\s+R\s+L|SOCIEDAD\s+ANONIMA|SOCIEDAD\s+AN[OÓ]NIMA|SOCIEDAD\s+DE\s+RESPONSABILIDAD\s+LIMITADA)\b',
+                nombre_norm,
+                re.IGNORECASE
+            ))
+            label_socio1 = "CUIT Socio 1 *" if es_sa_or_srl else "CUIT Socio 1"
+            
             client_id = str(client_data.get('id', 'default'))
             giro = col_s1.text_input("Giro Comercial", value=client_data.get('giro_comercial', ''), disabled=not edit_mode, key=f"giro_{client_id}")
-            socio1 = col_s2.text_input("CUIT Socio 1", value=val_socio1, disabled=not edit_mode, key=f"socio1_{client_id}")
+            socio1 = col_s2.text_input(label_socio1, value=val_socio1, disabled=not edit_mode, key=f"socio1_{client_id}")
             socio2 = col_s3.text_input("CUIT Socio 2", value=val_socio2, disabled=not edit_mode, key=f"socio2_{client_id}")
             
             cuit_s1_digits = "".join(filter(str.isdigit, str(socio1)))
@@ -501,19 +512,40 @@ def render_clientes_pendientes():
                 'referencia': referencia
             }
             
+            cuit_s1_digits = "".join(filter(str.isdigit, str(socio1)))
+            cuit_s2_digits = "".join(filter(str.isdigit, str(socio2)))
+            
             if col_btn1.button("Guardar Cambios Manuales", use_container_width=True, key=f"btn_save_{client_id}"):
-                datos_actualizados['estado'] = 'Modificado'
-                supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
-                st.session_state['validador_success'] = "Datos guardados. Estado cambiado a Modificado."
-                st.rerun()
+                if es_sa_or_srl and not cuit_s1_digits:
+                    st.error("❌ CUIT Socio 1 es obligatorio para Sociedades Anónimas o SRL.")
+                elif es_sa_or_srl and len(cuit_s1_digits) != 11:
+                    st.error("❌ CUIT Socio 1 debe tener exactamente 11 dígitos.")
+                elif cuit_s1_digits and len(cuit_s1_digits) != 11:
+                    st.error("❌ CUIT Socio 1 debe tener exactamente 11 dígitos.")
+                elif cuit_s2_digits and len(cuit_s2_digits) != 11:
+                    st.error("❌ CUIT Socio 2 debe tener exactamente 11 dígitos.")
+                else:
+                    datos_actualizados['estado'] = 'Modificado'
+                    supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
+                    st.session_state['validador_success'] = "Datos guardados. Estado cambiado a Modificado."
+                    st.rerun()
                 
             if col_btn2.button("Marcar para Exportar (Aprobado)", type="primary", use_container_width=True, key=f"btn_approve_{client_id}"):
-                datos_actualizados['estado'] = 'A Exportar'
-                supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
-                st.session_state['validador_success'] = f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente."
-                if "tabla_pendientes" in st.session_state:
-                    del st.session_state["tabla_pendientes"]
-                st.rerun()
+                if es_sa_or_srl and not cuit_s1_digits:
+                    st.error("❌ CUIT Socio 1 es obligatorio para Sociedades Anónimas o SRL.")
+                elif es_sa_or_srl and len(cuit_s1_digits) != 11:
+                    st.error("❌ CUIT Socio 1 debe tener exactamente 11 dígitos.")
+                elif cuit_s1_digits and len(cuit_s1_digits) != 11:
+                    st.error("❌ CUIT Socio 1 debe tener exactamente 11 dígitos.")
+                elif cuit_s2_digits and len(cuit_s2_digits) != 11:
+                    st.error("❌ CUIT Socio 2 debe tener exactamente 11 dígitos.")
+                else:
+                    datos_actualizados['estado'] = 'A Exportar'
+                    supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
+                    st.session_state['validador_success'] = f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente."
+                    if "tabla_pendientes" in st.session_state:
+                        del st.session_state["tabla_pendientes"]
+                    st.rerun()
 
             if col_btn3.button("🛑 Rechazar Alta", type="secondary", use_container_width=True, key=f"btn_reject_{client_id}"):
                 datos_actualizados['estado'] = 'Validado'  # Guardamos como 'Validado' por la restricción CHECK en Supabase, se mostrará como 'Rechazado' en la UI
@@ -736,9 +768,20 @@ def render_clientes_rechazados():
             val_socio1 = _limpiar_cuit_db(client_data.get('cuit_socio1', ''))
             val_socio2 = _limpiar_cuit_db(client_data.get('cuit_socio2', ''))
             
+            # Determinar si es SA o SRL de forma robusta
+            import re
+            nombre_cliente = client_data.get('nombre', '')
+            nombre_norm = re.sub(r'\s+', ' ', nombre_cliente.replace('.', '').replace(',', '').strip().upper())
+            es_sa_or_srl = bool(re.search(
+                r'\b(SA|SRL|S\s+A|S\s+R\s+L|SOCIEDAD\s+ANONIMA|SOCIEDAD\s+AN[OÓ]NIMA|SOCIEDAD\s+DE\s+RESPONSABILIDAD\s+LIMITADA)\b',
+                nombre_norm,
+                re.IGNORECASE
+            ))
+            label_socio1 = "CUIT Socio 1 *" if es_sa_or_srl else "CUIT Socio 1"
+            
             client_id = str(client_data.get('id', 'default'))
             col_s1.text_input("Giro Comercial", value=client_data.get('giro_comercial', ''), disabled=True, key=f"r_giro_{client_id}")
-            col_s2.text_input("CUIT Socio 1", value=val_socio1, disabled=True, key=f"r_socio1_{client_id}")
+            col_s2.text_input(label_socio1, value=val_socio1, disabled=True, key=f"r_socio1_{client_id}")
             col_s3.text_input("CUIT Socio 2", value=val_socio2, disabled=True, key=f"r_socio2_{client_id}")
             
             cuit_s1_digits = "".join(filter(str.isdigit, str(val_socio1)))
