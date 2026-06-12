@@ -312,19 +312,29 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
                         err_msg = get_text(error_node_a5, 'error')
                         datos["tipo_resp_error"] = err_msg or "Error en el servicio de constancia de inscripción de AFIP."
                     else:
+                        tiene_ri = False
+                        tiene_mono = False
+                        tiene_exento = False
+                        
                         for imp in root_a5.iter():
                             if 'impuesto' in imp.tag:
                                 id_imp = get_text(imp, 'idImpuesto')
-                                if id_imp == '30':
-                                    datos["tipo_resp_desc"] = "Responsable Inscripto"
-                                    datos["tipo_resp_codigo"] = "1.0"
-                                    break
+                                if id_imp in ['20', '21', '22']:
+                                    tiene_mono = True
                                 elif id_imp == '32':
-                                    datos["tipo_resp_desc"] = "Exento"
-                                    datos["tipo_resp_codigo"] = "4.0"
-                                elif id_imp == '20':
-                                    datos["tipo_resp_desc"] = "Monotributista"
-                                    datos["tipo_resp_codigo"] = "3.0"
+                                    tiene_exento = True
+                                elif id_imp in ['30', '10', '11']:
+                                    tiene_ri = True
+                                    
+                        if tiene_exento:
+                            datos["tipo_resp_desc"] = "Exento"
+                            datos["tipo_resp_codigo"] = "4.0"
+                        elif tiene_mono:
+                            datos["tipo_resp_desc"] = "Monotributista"
+                            datos["tipo_resp_codigo"] = "3.0"
+                        elif tiene_ri:
+                            datos["tipo_resp_desc"] = "Responsable Inscripto"
+                            datos["tipo_resp_codigo"] = "1.0"
                 else:
                     datos["tipo_resp_error"] = f"Error del servidor de constancias de AFIP: {resp_a5.status_code}"
             except Exception as e5:
