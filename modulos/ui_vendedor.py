@@ -49,6 +49,7 @@ def render_vendedor_dashboard():
             "localidad": "", "provincia": "", "cp": "", "estado": "",
             "tipo_doc_desc": "", "tipo_doc_codigo": "",
             "tipo_resp_desc": "", "tipo_resp_codigo": "",
+            "tipo_resp_error": "",
             "actividad": "", "cod_acti": "",
             "antiguedad": "", "mes_cierre": ""
         }
@@ -96,9 +97,14 @@ def render_vendedor_dashboard():
                             st.session_state['afip_data']['provincia'] = resultado.get('provincia', '')
                             st.session_state['afip_data']['estado'] = resultado.get('estado', '')
                             st.session_state['afip_data']['tipo_doc_desc'] = resultado.get('tipo_doc_desc', '')
+                            st.session_state['afip_data']['tipo_doc_codigo'] = resultado.get('tipo_doc_codigo', '')
                             st.session_state['afip_data']['tipo_resp_desc'] = resultado.get('tipo_resp_desc', '')
+                            st.session_state['afip_data']['tipo_resp_codigo'] = resultado.get('tipo_resp_codigo', '')
+                            st.session_state['afip_data']['tipo_resp_error'] = resultado.get('tipo_resp_error', '')
                             st.session_state['afip_data']['actividad'] = resultado.get('actividad', '')
                             st.session_state['afip_data']['cod_acti'] = resultado.get('cod_acti', '')
+                            st.session_state['afip_data']['antiguedad'] = resultado.get('antiguedad', '')
+                            st.session_state['afip_data']['mes_cierre'] = resultado.get('mes_cierre', '')
                             st.session_state['modo_carga'] = 'afip'
                     
                     st.session_state['voz_datos']['n_fantasia'] = datos_extraidos.get('n_fantasia', '')
@@ -164,6 +170,7 @@ def render_vendedor_dashboard():
                                 st.session_state['afip_data']['tipo_doc_codigo'] = resultado.get('tipo_doc_codigo', '')
                                 st.session_state['afip_data']['tipo_resp_desc'] = resultado.get('tipo_resp_desc', '')
                                 st.session_state['afip_data']['tipo_resp_codigo'] = resultado.get('tipo_resp_codigo', '')
+                                st.session_state['afip_data']['tipo_resp_error'] = resultado.get('tipo_resp_error', '')
                                 st.session_state['afip_data']['actividad'] = resultado.get('actividad', '')
                                 st.session_state['afip_data']['cod_acti'] = resultado.get('cod_acti', '')
                                 st.session_state['afip_data']['antiguedad'] = resultado.get('antiguedad', '')
@@ -233,7 +240,11 @@ def render_vendedor_dashboard():
                             break
                 tresp_sel = st.selectbox("Tipo Responsable *", opciones_resp, index=idx_resp)
                 if is_afip and not st.session_state['afip_data'].get('tipo_resp_desc', ''):
-                    st.caption("⚠️ AFIP no devolvió impuestos. Por favor, selecciona manualmente.")
+                    err_msg = st.session_state['afip_data'].get('tipo_resp_error', '')
+                    if err_msg:
+                        st.caption(f"⚠️ AFIP no devolvió impuestos debido a: **{err_msg}**. Por favor, selecciona manualmente.")
+                    else:
+                        st.caption("⚠️ AFIP no devolvió impuestos. Por favor, selecciona manualmente.")
                     
         val_acti = st.session_state['afip_data'].get('actividad', '')
         acti_input = st.text_input("Actividad Principal", value=val_acti, disabled=(is_afip and bool(val_acti)))
@@ -411,6 +422,7 @@ def render_vendedor_dashboard():
                         "localidad": "", "provincia": "", "cp": "", "estado": "",
                         "tipo_doc_desc": "", "tipo_doc_codigo": "",
                         "tipo_resp_desc": "", "tipo_resp_codigo": "",
+                        "tipo_resp_error": "",
                         "actividad": "", "cod_acti": "",
                         "antiguedad": "", "mes_cierre": ""
                     }

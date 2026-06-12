@@ -17,8 +17,8 @@ CERT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "certs", "c
 KEY_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "certs", "afip.key")
 CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".streamlit", "afip_auth.json")
 
-def _generar_tra():
-    """Genera el Ticket de Requerimiento de Acceso (TRA) en XML"""
+def _generar_tra(service_name):
+    """Genera el Ticket de Requerimiento de Acceso (TRA) en XML para el servicio especificado"""
     ahora = datetime.utcnow() - timedelta(minutes=5)
     expiracion = ahora + timedelta(hours=12)
     
@@ -31,7 +31,7 @@ def _generar_tra():
     <generationTime>{ahora.strftime('%Y-%m-%dT%H:%M:%S-00:00')}</generationTime>
     <expirationTime>{expiracion.strftime('%Y-%m-%dT%H:%M:%S-00:00')}</expirationTime>
   </header>
-  <service>ws_sr_padron_{PADRON_VERSION.lower()}</service>
+  <service>{service_name}</service>
 </loginTicketRequest>"""
     return tra_xml
 
@@ -100,21 +100,28 @@ def _firmar_tra(tra_xml):
             if os.path.exists(tmp_file):
                 os.remove(tmp_file)
 
-def _obtener_token_wsaa():
-    """Obtiene el Token y Sign del WSAA usando caché si está vigente"""
+def _obtener_token_wsaa(service_name=None):
+    """Obtiene el Token y Sign del WSAA usando caché si está vigente para el servicio solicitado"""
+    if service_name is None:
+        service_name = f"ws_sr_padron_{PADRON_VERSION.lower()}"
+        
+    cache_data = {}
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r") as f:
-            data = json.load(f)
-            # Verificamos si expiró (guardamos timestamp de cuando se pidió)
-            if time.time() - data.get("timestamp", 0) < 40000: # ~11 horas
-                return data["token"], data["sign"]
+        try:
+            with open(CACHE_FILE, "r") as f:
+                cache_data = json.load(f)
+                service_cache = cache_data.get(service_name)
+                if service_cache and (time.time() - service_cache.get("timestamp", 0) < 40000): # ~11 horas
+                    return service_cache["token"], service_cache["sign"]
+        except Exception:
+            pass
 
     # Si no hay caché o expiró, generamos nuevo
-    tra_xml = _generar_tra()
+    tra_xml = _generar_tra(service_name)
     cms_b64 = _firmar_tra(tra_xml)
     
     if not cms_b64:
-        raise Exception("No se pudo firmar el Ticket (revisa certificado.crt y afip.key).")
+        raise Exception(f"No se pudo firmar el Ticket para {service_name} (revisa certificado.crt y afip.key).")
 
     # Petición SOAP al WSAA
     soap_request = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -139,21 +146,25 @@ def _obtener_token_wsaa():
                 break
                 
         if not login_cms_return:
-            raise Exception("Error al procesar XML del WSAA: no se encontró loginCmsReturn.")
+            raise Exception(f"Error al procesar XML del WSAA para {service_name}: no se encontró loginCmsReturn.")
             
         return_root = ET.fromstring(login_cms_return)
         token = return_root.find('.//token').text
         sign = return_root.find('.//sign').text
         
-        # Guardamos en caché
-        with open(CACHE_FILE, "w") as f:
-            json.dump({"token": token, "sign": sign, "timestamp": time.time()}, f)
+        # Guardamos en caché indexado por servicio
+        cache_data[service_name] = {"token": token, "sign": sign, "timestamp": time.time()}
+        try:
+            with open(CACHE_FILE, "w") as f:
+                json.dump(cache_data, f)
+        except Exception:
+            pass
             
         return token, sign
     else:
         if "notAuthorized" in resp.text or "Computador no autorizado" in resp.text:
-            raise Exception(f"Tu certificado digital es válido, pero aún no tiene permisos para 'Consulta Padrón {PADRON_VERSION.upper()}'. Debes ingresar a ARCA (AFIP) -> Administrador de Relaciones de Clave Fiscal -> Nueva Relación, elegir el servicio 'Consulta Padrón {PADRON_VERSION.upper()}' y vincularlo al alias de tu computador. Si ya lo hiciste, recuerda que ARCA tarda hasta 1 hora en habilitarlo.")
-        raise Exception(f"Fallo Login AFIP: {resp.text}")
+            raise Exception(f"Tu certificado digital es válido, pero aún no tiene permisos para '{service_name}'. Debes ingresar a ARCA (AFIP) -> Administrador de Relaciones de Clave Fiscal -> Nueva Relación, elegir el servicio '{service_name}' y vincularlo al alias de tu computador. Si ya lo hiciste, recuerda que ARCA tarda hasta 1 hora en habilitarlo.")
+        raise Exception(f"Fallo Login AFIP ({service_name}): {resp.text}")
 
 def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
     """
@@ -165,10 +176,10 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
         return {"error": "El CUIT debe tener 11 dígitos."}
         
     try:
-        token, sign = _obtener_token_wsaa()
+        ns = PADRON_VERSION.lower()
+        token, sign = _obtener_token_wsaa(f"ws_sr_padron_{ns}")
         
         # Petición SOAP al Padrón dinámico
-        ns = PADRON_VERSION.lower()
         soap_request = f"""<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:{ns}="http://{ns}.soap.ws.server.puc.sr/">
    <soapenv:Header/>
@@ -194,7 +205,8 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
         def get_node(node, tag_name):
             if node is None: return None
             for elem in node.iter():
-                if tag_name in elem.tag:
+                local_tag = elem.tag.split('}')[-1]
+                if local_tag == tag_name:
                     return elem
             return None
             
@@ -221,6 +233,7 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             "tipo_doc_codigo": "",
             "tipo_resp_desc": "",
             "tipo_resp_codigo": "",
+            "tipo_resp_error": "",
             "actividad": "",
             "cod_acti": "",
             "antiguedad": "",
@@ -270,20 +283,52 @@ def consultar_cuit_afip(cuit, cuit_representante="20234022041"):
             datos["localidad"] = localidad if localidad else ""
             datos["provincia"] = provincia if provincia else ""
             
-        # Impuestos
-        for imp in persona.iter():
-            if 'impuesto' in imp.tag:
-                id_imp = get_text(imp, 'idImpuesto')
-                if id_imp == '30':
-                    datos["tipo_resp_desc"] = "Responsable Inscripto"
-                    datos["tipo_resp_codigo"] = "1.0"
-                    break
-                elif id_imp == '32':
-                    datos["tipo_resp_desc"] = "Exento"
-                    datos["tipo_resp_codigo"] = "4.0"
-                elif id_imp == '20':
-                    datos["tipo_resp_desc"] = "Monotributista"
-                    datos["tipo_resp_codigo"] = "3.0"
+        # Consulta complementaria de impuestos a ws_sr_constancia_inscripcion (A5)
+        if tipo_clave == "CUIL":
+            datos["tipo_resp_desc"] = "Consumidor Final"
+            datos["tipo_resp_codigo"] = "5.0"
+            datos["tipo_resp_error"] = "El CUIT corresponde a un CUIL (persona física no inscripta comercialmente)."
+        else:
+            try:
+                token_a5, sign_a5 = _obtener_token_wsaa("ws_sr_constancia_inscripcion")
+                soap_request_a5 = f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:a5="http://a5.soap.ws.server.puc.sr/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <a5:getPersona>
+         <token>{token_a5}</token>
+         <sign>{sign_a5}</sign>
+         <cuitRepresentada>{cuit_representante}</cuitRepresentada>
+         <idPersona>{cuit_limpio}</idPersona>
+      </a5:getPersona>
+   </soapenv:Body>
+</soapenv:Envelope>"""
+                
+                resp_a5 = requests.post("https://aws.afip.gov.ar/sr-padron/webservices/personaServiceA5", data=soap_request_a5, headers=headers)
+                if resp_a5.status_code == 200:
+                    root_a5 = ET.fromstring(resp_a5.text)
+                    error_node_a5 = get_node(root_a5, 'errorConstancia')
+                    if error_node_a5 is not None:
+                        err_msg = get_text(error_node_a5, 'error')
+                        datos["tipo_resp_error"] = err_msg or "Error en el servicio de constancia de inscripción de AFIP."
+                    else:
+                        for imp in root_a5.iter():
+                            if 'impuesto' in imp.tag:
+                                id_imp = get_text(imp, 'idImpuesto')
+                                if id_imp == '30':
+                                    datos["tipo_resp_desc"] = "Responsable Inscripto"
+                                    datos["tipo_resp_codigo"] = "1.0"
+                                    break
+                                elif id_imp == '32':
+                                    datos["tipo_resp_desc"] = "Exento"
+                                    datos["tipo_resp_codigo"] = "4.0"
+                                elif id_imp == '20':
+                                    datos["tipo_resp_desc"] = "Monotributista"
+                                    datos["tipo_resp_codigo"] = "3.0"
+                else:
+                    datos["tipo_resp_error"] = f"Error del servidor de constancias de AFIP: {resp_a5.status_code}"
+            except Exception as e5:
+                datos["tipo_resp_error"] = f"No se pudo consultar impuestos de AFIP: {str(e5)}"
                 
         return datos
 
