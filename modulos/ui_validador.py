@@ -101,58 +101,7 @@ def render_validador_dashboard():
         st.warning(st.session_state['validador_warning'])
         del st.session_state['validador_warning']
     
-    # Manejar estado de descarga
-    if 'archivo_exportado' in st.session_state:
-        import os
-        if os.path.exists(st.session_state['archivo_exportado']):
-            st.success("¡Exportación completada exitosamente! Los archivos están listos para descargar.")
-            
-            col_dl1, col_dl2, col_dl3 = st.columns(3)
-            with col_dl1:
-                with open(st.session_state['archivo_exportado'], "rb") as f:
-                    st.download_button(
-                        label="⬇️ Descargar Clientes_web.dbi",
-                        data=f,
-                        file_name="Clientes_web.dbi",
-                        mime="application/octet-stream",
-                        type="primary",
-                        key="btn_download_dbi_ready",
-                        use_container_width=True
-                    )
-            with col_dl2:
-                path_memo = st.session_state['archivo_exportado'].replace(".dbi", ".fpt")
-                if os.path.exists(path_memo):
-                    with open(path_memo, "rb") as f_memo:
-                        st.download_button(
-                            label="⬇️ Descargar Clientes_web.fpt",
-                            data=f_memo,
-                            file_name="Clientes_web.fpt",
-                            mime="application/octet-stream",
-                            type="primary",
-                            key="btn_download_fpt_ready",
-                            use_container_width=True
-                        )
-                else:
-                    st.info("No se generó .fpt")
-            with col_dl3:
-                path_dom = os.path.join(os.path.dirname(st.session_state['archivo_exportado']), "domicilios_entrega.txt")
-                if os.path.exists(path_dom):
-                    with open(path_dom, "rb") as f_dom:
-                        st.download_button(
-                            label="⬇️ Descargar Domicilios_Entrega.txt",
-                            data=f_dom,
-                            file_name="domicilios_entrega.txt",
-                            mime="text/plain",
-                            type="primary",
-                            key="btn_download_dom_ready",
-                            use_container_width=True
-                        )
 
-            
-            if st.button("Cerrar este mensaje", key="close_msg_download_pending", use_container_width=True):
-                del st.session_state['archivo_exportado']
-                st.rerun()
-            st.divider()
             
     if supabase is None:
         st.error("No hay conexión a la base de datos configurada.")
@@ -606,9 +555,6 @@ def render_clientes_pendientes():
                     st.session_state['validador_success'] = f"Exportación exitosa. Archivos generados y subidos al FTP: {ftp_msg}"
                 else:
                     st.session_state['validador_warning'] = f"Exportación completada localmente, pero falló la subida al FTP: {ftp_msg}. Puedes reintentar la subida desde el panel 'Sincronización FTP'."
-                    
-                st.session_state['archivo_exportado'] = ruta_salida
-                st.session_state['descarga_completada'] = False
                 st.rerun()
             
     except Exception as e:
