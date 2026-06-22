@@ -1,0 +1,11 @@
+{
+  "FTP_HOST": "messina.dns-dns.com",
+  "FTP_PORT": 59921,
+  "FTP_USER": "ftppasina",
+  "FTP_PASS": "enc:AQAJCgoEf1VBRUNE",
+  "SUPABASE_URL": "https://sspjbsbuklqiekvxgdtc.supabase.co",
+  "SUPABASE_KEY": "enc:NRg5AQwmLgw8GiMnNCo7VD0MKEF5XGQUMyI6XycKPT0lMCNXTzULLwMGUn9ZfV9rKgUrKwY4ICMJKTonEhkcLx8/CHsGe1hvKgI0GQcCfy9CElsWGTElMwEBD1peaH5zOigaHgcCIFwAKTonVxkfIwYHUwZZfnVrIDgrOAcuJyBAPRMJVR4IDkYqNXdDe1t3ZAIwIFgsJyRGPS0/UB4mDkYoOQIeVURuBScmJjYYOTw0OR4FURFBDgEjJ2sGf0UTGQYcXjYYIDwbFl1XL2gKJA==",
+  "IMPORTA_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Validador\\Importa",
+  "EXPORTA_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Validador\\Exporta",
+  "VENTAS_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Ventas"
+}

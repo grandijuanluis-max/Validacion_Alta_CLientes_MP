@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Streamlit config & secrets (protecting credentials and local tokens)
+.streamlit/secrets.toml
+.streamlit/afip_auth.json
+
+# AFIP certificates and keys (private files)
+certs/
+*.key
+*.crt
+*.csr
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project-specific logs & temporary data files
+*.log
+*.tmp
+*.spec
+build/
+dist/
+
+# Local databases and exports (Presea Importa/Exporta directories)
+*.dbi
+*.fpt
+data/
+windows_sync.exe
+
+# Match mock Windows directories starting with F:\ on macOS
+F:\\*
+Windows_Sync/
