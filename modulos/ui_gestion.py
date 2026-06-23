@@ -4,7 +4,7 @@ import numpy as np
 import datetime
 from modulos.db import supabase
 
-# ── Gemini ───────────────────────────────────────────────────────────────────
+# ── Gemini ────────────────────────────────────────────────────────────────────
 import google.generativeai as genai
 api_key = None
 try:
@@ -18,7 +18,6 @@ if api_key:
 #  CONSTANTES
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Mapa campo_db → etiqueta visual
 DIMENSIONES_DISPONIBLES = {
     "empresa":    "Empresa",
     "rubro":      "Rubro",
@@ -38,17 +37,34 @@ DIMENSIONES_DISPONIBLES = {
     "_mes":       "Mes",
 }
 
-DEFAULT_ROW_DIMS  = ["rubro", "subrubro", "vendedo", "clien", "producto"]
-DEFAULT_COL_DIMS  = ["_año", "_mes"]   # dimensiones de banda columna
-METRICAS          = {"impo": "IMPO NETO", "bultos": "BULTOS"}
+DEFAULT_ROW_DIMS = ["rubro", "subrubro", "vendedo", "clien", "producto"]
+DEFAULT_COL_DIMS = ["_año", "_mes"]
+METRICAS         = {"impo": "IMPO NETO", "bultos": "BULTOS"}
+
+ATAJOS = [
+    "Mes Actual",
+    "Hoy",
+    "Ayer",
+    "Semana Actual",
+    "Semana Anterior",
+    "Mes Anterior",
+    "Este Año",
+    "Últimos 3 Años",
+    "Últimos 5 Años",
+    "Todo",
+    "Ingresar fecha manualmente",
+]
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CARGA DE DATOS
+#  CARGA DE DATOS — Paginación completa sin límite artificial
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_sales_full() -> pd.DataFrame:
-    """Carga TODOS los registros de ventas de Supabase con paginación."""
+def load_sales_range(fecha_desde_iso: str, fecha_hasta_iso: str) -> pd.DataFrame:
+    """
+    Carga TODOS los registros de ventas en el rango dado, usando paginación.
+    Retorna un DataFrame limpio y tipado.
+    """
     if supabase is None:
         return pd.DataFrame()
     try:
@@ -58,8 +74,46 @@ def load_sales_full() -> pd.DataFrame:
         cols = (
             "fecha, empresa, formulario, numero, rubro, subrubro, grupo, "
             "localidad, provincia, unidades, ean, clien, cod_clien, producto, "
-            "sinonimo, vendedo, domicilio, deposito, bultos, impo"
+            "sinonimo, vendedo, deposito, bultos, impo"
         )
+        while True:
+            res = (
+                supabase.table("ventas")
+                .select(cols)
+                .gte("fecha", fecha_desde_iso)
+                .lte("fecha", fecha_hasta_iso)
+                .range(offset, offset + PAGE - 1)
+                .execute()
+            )
+            if not res.data:
+                break
+            frames.append(pd.DataFrame(res.data))
+            if len(res.data) < PAGE:
+                break
+            offset += PAGE
+
+        if not frames:
+            return pd.DataFrame()
+
+        df = pd.concat(frames, ignore_index=True)
+        _typecast(df)
+        return df
+
+    except Exception as e:
+        st.error(f"Error cargando ventas: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_sales_full_for_ia() -> pd.DataFrame:
+    """Carga TODA la tabla ventas para el contexto del Gemini Brain (sin filtros de UI)."""
+    if supabase is None:
+        return pd.DataFrame()
+    try:
+        PAGE = 10_000
+        offset = 0
+        frames = []
+        cols = "fecha, rubro, vendedo, provincia, formulario, bultos, impo, cod_clien"
         while True:
             res = (
                 supabase.table("ventas")
@@ -78,72 +132,66 @@ def load_sales_full() -> pd.DataFrame:
             return pd.DataFrame()
 
         df = pd.concat(frames, ignore_index=True)
-        df["fecha"]     = pd.to_datetime(df["fecha"], errors="coerce")
-        df["impo"]      = pd.to_numeric(df["impo"],      errors="coerce").fillna(0.0)
-        df["bultos"]    = pd.to_numeric(df["bultos"],    errors="coerce").fillna(0.0)
-        df["unidades"]  = pd.to_numeric(df["unidades"],  errors="coerce").fillna(0.0)
+        df["fecha"]  = pd.to_datetime(df["fecha"], errors="coerce")
+        df["impo"]   = pd.to_numeric(df["impo"],   errors="coerce").fillna(0.0)
+        df["bultos"] = pd.to_numeric(df["bultos"], errors="coerce").fillna(0.0)
         df["cod_clien"] = pd.to_numeric(df["cod_clien"], errors="coerce").fillna(0).astype(int)
-
-        # Columnas derivadas de fecha
         df["_año"] = df["fecha"].dt.year.astype("Int64").astype(str)
         df["_mes"] = df["fecha"].dt.month.astype("Int64").astype(str).str.zfill(2)
-
-        # Limpiar strings vacíos → "(Vacío)"
-        str_cols = ["empresa", "rubro", "subrubro", "grupo", "vendedo",
-                    "formulario", "deposito", "provincia", "localidad",
-                    "clien", "producto", "sinonimo", "ean"]
-        for c in str_cols:
-            if c in df.columns:
-                df[c] = df[c].fillna("").str.strip()
-                df[c] = df[c].replace("", "(Vacío)")
-
         return df
-
     except Exception as e:
-        st.error(f"Error cargando ventas: {e}")
         return pd.DataFrame()
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_unique_values(col: str) -> list:
-    """Obtiene valores únicos de una columna para los filtros."""
+def get_total_count() -> int:
+    """Cuenta el total de registros en la tabla ventas."""
     if supabase is None:
-        return []
+        return 0
     try:
-        res = supabase.table("ventas").select(col).execute()
-        vals = pd.DataFrame(res.data)[col].dropna().unique().tolist()
-        vals = sorted([str(v).strip() for v in vals if str(v).strip()])
-        return vals
+        res = supabase.table("ventas").select("id", count="exact").execute()
+        return res.count or 0
     except Exception:
-        return []
+        return 0
+
+
+def _typecast(df: pd.DataFrame):
+    """Convierte tipos en el DataFrame in-place."""
+    df["fecha"]     = pd.to_datetime(df["fecha"],    errors="coerce")
+    df["impo"]      = pd.to_numeric(df["impo"],      errors="coerce").fillna(0.0)
+    df["bultos"]    = pd.to_numeric(df["bultos"],    errors="coerce").fillna(0.0)
+    df["unidades"]  = pd.to_numeric(df["unidades"],  errors="coerce").fillna(0.0)
+    df["cod_clien"] = pd.to_numeric(df["cod_clien"], errors="coerce").fillna(0).astype(int)
+    df["_año"] = df["fecha"].dt.year.astype("Int64").astype(str)
+    df["_mes"] = df["fecha"].dt.month.astype("Int64").astype(str).str.zfill(2)
+    str_cols = ["empresa", "rubro", "subrubro", "grupo", "vendedo", "formulario",
+                "deposito", "provincia", "localidad", "clien", "producto", "sinonimo", "ean"]
+    for c in str_cols:
+        if c in df.columns:
+            df[c] = df[c].fillna("").str.strip().replace("", "(Vacío)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  UTILIDADES DE FECHA
+#  FECHAS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def date_range_for_shortcut(shortcut: str):
-    """Devuelve (desde, hasta) para cada atajo de fecha."""
     hoy = datetime.date.today()
     if shortcut == "Hoy":
         return hoy, hoy
     elif shortcut == "Ayer":
-        ayer = hoy - datetime.timedelta(days=1)
-        return ayer, ayer
+        a = hoy - datetime.timedelta(days=1)
+        return a, a
     elif shortcut == "Semana Actual":
-        lunes = hoy - datetime.timedelta(days=hoy.weekday())
-        return lunes, hoy
+        return hoy - datetime.timedelta(days=hoy.weekday()), hoy
     elif shortcut == "Semana Anterior":
-        lunes_ant = hoy - datetime.timedelta(days=hoy.weekday() + 7)
-        domingo_ant = lunes_ant + datetime.timedelta(days=6)
-        return lunes_ant, domingo_ant
+        la = hoy - datetime.timedelta(days=hoy.weekday() + 7)
+        return la, la + datetime.timedelta(days=6)
     elif shortcut == "Mes Actual":
-        inicio = hoy.replace(day=1)
-        return inicio, hoy
+        return hoy.replace(day=1), hoy
     elif shortcut == "Mes Anterior":
-        fin_mes_ant = hoy.replace(day=1) - datetime.timedelta(days=1)
-        inicio_mes_ant = fin_mes_ant.replace(day=1)
-        return inicio_mes_ant, fin_mes_ant
+        fin = hoy.replace(day=1) - datetime.timedelta(days=1)
+        return fin.replace(day=1), fin
     elif shortcut == "Este Año":
         return hoy.replace(month=1, day=1), hoy
     elif shortcut == "Últimos 3 Años":
@@ -156,216 +204,20 @@ def date_range_for_shortcut(shortcut: str):
         return hoy.replace(month=1, day=1), hoy
 
 
-def fmt_date_ar(d: datetime.date) -> str:
-    """Formatea fecha como dd/mm/aaaa."""
+def fmt_ar(d) -> str:
     if d is None:
         return ""
     return d.strftime("%d/%m/%Y")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  CONSTRUCCIÓN DEL CUADRO DINÁMICO
-# ══════════════════════════════════════════════════════════════════════════════
-
 def fmt_num_ar(val, decimals=2) -> str:
-    """Formato numérico argentino: punto de miles, coma decimal."""
     if pd.isna(val) or val == 0:
         return "-"
     try:
         s = f"{val:,.{decimals}f}"
-        # Reemplazar separadores: , → _ temporal → .  y  . → ,
-        s = s.replace(",", "MILLES").replace(".", ",").replace("MILLES", ".")
-        return s
+        return s.replace(",", "MILLES").replace(".", ",").replace("MILLES", ".")
     except Exception:
         return str(val)
-
-
-def build_hierarchical_table(
-    df: pd.DataFrame,
-    row_dims: list[str],
-    col_dims: list[str],
-    metrics: list[str],
-) -> pd.DataFrame:
-    """
-    Construye la tabla dinámica agrupada con subtotales jerárquicos.
-    
-    - row_dims: campos de agrupación de filas (izq → der)
-    - col_dims: campos de banda de columna (ej: ['_año', '_mes'])
-    - metrics:  lista de campos a sumar (ej: ['impo', 'bultos'])
-    
-    Retorna un DataFrame formateado listo para mostrar.
-    """
-    if df.empty or not row_dims:
-        return pd.DataFrame()
-
-    # Si hay dimensiones de columna, hacemos pivot
-    if col_dims:
-        all_group = row_dims + col_dims
-        # Asegurarnos que todas las columnas existen
-        valid_group = [c for c in all_group if c in df.columns]
-        valid_metrics = [m for m in metrics if m in df.columns]
-        if not valid_metrics:
-            return pd.DataFrame()
-
-        agg = df.groupby(valid_group, observed=True)[valid_metrics].sum().reset_index()
-
-        # Construir tabla con subtotales por jerarquía de filas
-        result_frames = []
-        result_frames.append(_build_level_subtotals(agg, row_dims, col_dims, valid_metrics))
-        if result_frames:
-            final = result_frames[0]
-        else:
-            final = pd.DataFrame()
-        return final
-
-    else:
-        # Sin bandas de columna: tabla plana agrupada
-        valid_group = [c for c in row_dims if c in df.columns]
-        valid_metrics = [m for m in metrics if m in df.columns]
-        if not valid_metrics:
-            return pd.DataFrame()
-
-        agg = df.groupby(valid_group, observed=True)[valid_metrics].sum().reset_index()
-        return _add_row_subtotals_flat(agg, row_dims, valid_metrics)
-
-
-def _build_level_subtotals(
-    agg: pd.DataFrame,
-    row_dims: list[str],
-    col_dims: list[str],
-    metrics: list[str],
-) -> pd.DataFrame:
-    """
-    Genera tabla jerárquica con subtotales, pivotada por col_dims.
-    Retorna un DataFrame con MultiIndex de columnas aplanado.
-    """
-    all_col_vals = {}
-    for cd in col_dims:
-        if cd in agg.columns:
-            all_col_vals[cd] = sorted(agg[cd].dropna().unique().tolist())
-
-    def pivot_slice(df_slice: pd.DataFrame, group_keys: dict) -> pd.Series:
-        """Pivota un slice del df y retorna una Serie con columnas (col_val, metric)."""
-        data = {}
-        # Total general
-        for m in metrics:
-            data[("Totales", METRICAS.get(m, m))] = df_slice[m].sum()
-        # Por cada combinación de col_dims
-        if col_dims and col_dims[0] in df_slice.columns:
-            grp_cols = [c for c in col_dims if c in df_slice.columns]
-            for _, sub in df_slice.groupby(grp_cols, observed=True):
-                if isinstance(sub, pd.DataFrame):
-                    col_key = tuple(sub[c].iloc[0] for c in grp_cols) if len(grp_cols) > 1 else sub[grp_cols[0]].iloc[0]
-                else:
-                    col_key = sub[grp_cols[0]].iloc[0]
-                col_key_str = str(col_key)
-                for m in metrics:
-                    data[(col_key_str, METRICAS.get(m, m))] = sub[m].sum()
-        return pd.Series(data)
-
-    rows = []
-
-    def recurse(df_sub: pd.DataFrame, level: int, prefix_vals: list):
-        if level >= len(row_dims):
-            return
-
-        dim = row_dims[level]
-        if dim not in df_sub.columns:
-            return
-
-        for val, grp in df_sub.groupby(dim, sort=True, observed=True):
-            row_info = {rd: "" for rd in row_dims}
-            for i, pv in enumerate(prefix_vals):
-                row_info[row_dims[i]] = pv
-            row_info[dim] = str(val)
-
-            if level == len(row_dims) - 1:
-                # Hoja
-                pivot_data = pivot_slice(grp, row_info)
-                row_info.update(pivot_data.to_dict())
-                rows.append(row_info)
-            else:
-                # Recursión
-                recurse(grp, level + 1, prefix_vals + [str(val)])
-                # Subtotal de este nivel
-                subtotal_info = {rd: "" for rd in row_dims}
-                for i, pv in enumerate(prefix_vals):
-                    subtotal_info[row_dims[i]] = pv
-                subtotal_info[dim] = f"  ∑ Totales {str(val)}"
-                pivot_data = pivot_slice(grp, subtotal_info)
-                subtotal_info.update(pivot_data.to_dict())
-                subtotal_info["_is_subtotal"] = True
-                rows.append(subtotal_info)
-
-        # Total general de este nivel
-        total_info = {rd: "" for rd in row_dims}
-        for i, pv in enumerate(prefix_vals):
-            total_info[row_dims[i]] = pv
-        if prefix_vals:
-            total_info[row_dims[level - 1]] = f"  ► TOTAL GENERAL"
-        else:
-            total_info[row_dims[0]] = "▌ TOTAL GENERAL"
-        pivot_data = pivot_slice(df_sub, total_info)
-        total_info.update(pivot_data.to_dict())
-        total_info["_is_total"] = True
-        rows.append(total_info)
-
-    recurse(agg, 0, [])
-
-    if not rows:
-        return pd.DataFrame()
-
-    result = pd.DataFrame(rows)
-    result = result.drop(columns=[c for c in ["_is_subtotal", "_is_total"] if c in result.columns], errors="ignore")
-    return result
-
-
-def _add_row_subtotals_flat(
-    agg: pd.DataFrame,
-    row_dims: list[str],
-    metrics: list[str],
-) -> pd.DataFrame:
-    """Para el caso sin bandas de columna: agrega filas de subtotal."""
-    rows = []
-
-    def recurse(df_sub: pd.DataFrame, level: int, prefix_vals: list):
-        if level >= len(row_dims):
-            return
-        dim = row_dims[level]
-        if dim not in df_sub.columns:
-            return
-
-        for val, grp in df_sub.groupby(dim, sort=True, observed=True):
-            row_info = {rd: "" for rd in row_dims}
-            for i, pv in enumerate(prefix_vals):
-                row_info[row_dims[i]] = pv
-            row_info[dim] = str(val)
-
-            if level == len(row_dims) - 1:
-                for m in metrics:
-                    row_info[METRICAS.get(m, m)] = grp[m].sum()
-                rows.append(row_info)
-            else:
-                recurse(grp, level + 1, prefix_vals + [str(val)])
-                subtotal_info = {rd: "" for rd in row_dims}
-                for i, pv in enumerate(prefix_vals):
-                    subtotal_info[row_dims[i]] = pv
-                subtotal_info[dim] = f"  ∑ Totales {str(val)}"
-                for m in metrics:
-                    subtotal_info[METRICAS.get(m, m)] = grp[m].sum()
-                rows.append(subtotal_info)
-
-        total_info = {rd: "" for rd in row_dims}
-        if prefix_vals:
-            total_info[row_dims[level - 1]] = "  ► TOTAL GENERAL"
-        else:
-            total_info[row_dims[0]] = "▌ TOTAL GENERAL"
-        for m in metrics:
-            total_info[METRICAS.get(m, m)] = df_sub[m].sum()
-        rows.append(total_info)
-
-    recurse(agg, 0, [])
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -373,77 +225,57 @@ def _add_row_subtotals_flat(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_gestion_dashboard():
-    # ── CSS Premium ──────────────────────────────────────────────────────────
+
+    # ── CSS Premium — NO pisa el sidebar de Streamlit ─────────────────────────
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+    /* Encabezado */
     .gestion-header {
         font-family: 'Inter', sans-serif;
-        font-size: 2rem;
-        font-weight: 800;
+        font-size: 2rem; font-weight: 800;
         background: linear-gradient(135deg, #38bdf8 0%, #818cf8 60%, #c084fc 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         margin-bottom: 2px;
     }
-    .gestion-sub {
-        color: #94a3b8;
-        font-size: 0.92rem;
-        margin-bottom: 20px;
-    }
+    .gestion-sub { color: #94a3b8; font-size: 0.92rem; margin-bottom: 20px; }
+
+    /* KPIs */
     .kpi-card {
         background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        border: 1px solid #334155;
-        border-radius: 14px;
-        padding: 18px 22px;
-        margin-bottom: 14px;
+        border: 1px solid #334155; border-radius: 14px;
+        padding: 18px 22px; margin-bottom: 14px;
         transition: transform 0.2s, border-color 0.2s;
     }
     .kpi-card:hover { transform: translateY(-3px); border-color: #38bdf8; }
     .kpi-title { color: #94a3b8; font-size: 0.78rem; font-weight: 600;
                  text-transform: uppercase; letter-spacing: 0.06em; margin: 0; }
-    .kpi-value { color: #f1f5f9; font-size: 1.75rem; font-weight: 700;
-                 margin: 6px 0 2px 0; }
+    .kpi-value { color: #f1f5f9; font-size: 1.75rem; font-weight: 700; margin: 6px 0 2px 0; }
     .kpi-sub   { color: #10b981; font-size: 0.76rem; margin: 0; }
 
+    /* Títulos de sección */
     .section-title {
-        font-family: 'Inter', sans-serif;
-        font-size: 1.1rem; font-weight: 700;
+        font-family: 'Inter', sans-serif; font-size: 1.1rem; font-weight: 700;
         color: #e2e8f0; margin: 22px 0 10px 0;
         border-left: 4px solid #38bdf8; padding-left: 10px;
     }
 
-    /* Atajos de fecha */
-    .fecha-atajos-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-
     /* Panel IA */
     .ia-panel {
         background: radial-gradient(circle at top left, #1e1b4b 0%, #0f172a 100%);
-        border: 1px solid #3730a3;
-        border-radius: 18px;
-        padding: 28px;
-        margin-top: 28px;
+        border: 1px solid #3730a3; border-radius: 18px;
+        padding: 28px; margin-top: 28px;
         box-shadow: 0 12px 40px rgba(79,70,229,0.15);
     }
 
     /* Tabla dinámica */
-    .pivot-container {
-        border: 1px solid #1e293b;
-        border-radius: 12px;
-        overflow: hidden;
-        margin-top: 10px;
-    }
-    /* Filas de subtotal y total */
-    [data-testid="stDataFrame"] tr td:first-child { font-weight: 600; }
-
-    /* Ajuste sidebar */
-    section[data-testid="stSidebar"] { background: #0b1120 !important; }
-    section[data-testid="stSidebar"] * { color: #e2e8f0 !important; }
+    .pivot-container { border: 1px solid #1e293b; border-radius: 12px;
+                       overflow: hidden; margin-top: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-    # ── Encabezado ───────────────────────────────────────────────────────────
+    # ── Encabezado ─────────────────────────────────────────────────────────────
     st.markdown('<h1 class="gestion-header">📊 Análisis de Gestión</h1>', unsafe_allow_html=True)
     st.markdown('<p class="gestion-sub">Cuadro dinámico de ventas · Motor IA · Filtros ágiles</p>', unsafe_allow_html=True)
 
@@ -451,158 +283,136 @@ def render_gestion_dashboard():
         st.error("⚠️ Sin conexión a la base de datos.")
         return
 
-    # ── Carga de datos completa ───────────────────────────────────────────────
-    with st.spinner("⏳ Cargando tabla de ventas completa..."):
-        df_all = load_sales_full()
-
-    if df_all.empty:
-        st.warning("No se encontraron registros en la tabla de ventas.")
-        st.info("Asegurate de que el sincronizador local haya subido los datos a Supabase.")
-        _render_uploader()
-        return
-
-    total_registros = len(df_all)
+    total_bd = get_total_count()
 
     # ══════════════════════════════════════════════════════════════════════════
     #  SIDEBAR — FILTROS
     # ══════════════════════════════════════════════════════════════════════════
     with st.sidebar:
         st.markdown("### 🔍 Filtros de Gestión")
-        st.caption(f"Base completa: {total_registros:,} registros")
-
+        st.caption(f"Base total: {total_bd:,} registros")
         st.markdown("---")
 
-        # ── Atajos de Fecha ──────────────────────────────────────────────────
+        # ── Selector de período (combo único) ────────────────────────────────
         st.markdown("**📅 Período**")
 
-        ATAJOS = [
-            "Hoy", "Ayer", "Semana Actual", "Semana Anterior",
-            "Mes Actual", "Mes Anterior", "Este Año",
-            "Últimos 3 Años", "Últimos 5 Años", "Todo"
-        ]
-
+        # Inicializar estado
         if "fecha_atajo" not in st.session_state:
-            st.session_state["fecha_atajo"] = "Este Año"
+            st.session_state["fecha_atajo"] = "Mes Actual"
         if "fecha_desde" not in st.session_state or "fecha_hasta" not in st.session_state:
-            d0, d1 = date_range_for_shortcut("Este Año")
+            d0, d1 = date_range_for_shortcut("Mes Actual")
             st.session_state["fecha_desde"] = d0
             st.session_state["fecha_hasta"] = d1
 
-        # Grilla de botones de atajos (2 columnas)
-        cols_atajos = st.columns(2)
-        for i, atajo in enumerate(ATAJOS):
-            col = cols_atajos[i % 2]
-            is_active = st.session_state.get("fecha_atajo") == atajo
-            label = f"✅ {atajo}" if is_active else atajo
-            if col.button(label, key=f"atajo_{i}", use_container_width=True):
-                st.session_state["fecha_atajo"] = atajo
-                d0, d1 = date_range_for_shortcut(atajo)
+        # Índice actual en la lista
+        try:
+            idx_actual = ATAJOS.index(st.session_state["fecha_atajo"])
+        except ValueError:
+            idx_actual = 0
+
+        sel_atajo = st.selectbox(
+            "Período",
+            options=ATAJOS,
+            index=idx_actual,
+            key="sel_atajo_periodo",
+            label_visibility="collapsed",
+        )
+
+        # Actualizar fechas si cambia el atajo (y no es manual)
+        if sel_atajo != "Ingresar fecha manualmente":
+            if sel_atajo != st.session_state.get("fecha_atajo"):
+                d0, d1 = date_range_for_shortcut(sel_atajo)
                 st.session_state["fecha_desde"] = d0
                 st.session_state["fecha_hasta"] = d1
-
-        st.markdown("**Desde / Hasta** *(dd/mm/aaaa)*")
-
-        # Inputs manuales (formato dd/mm/aaaa visual)
-        col_d, col_h = st.columns(2)
-        with col_d:
-            txt_desde = st.text_input(
+            st.session_state["fecha_atajo"] = sel_atajo
+            fecha_desde = st.session_state["fecha_desde"]
+            fecha_hasta = st.session_state["fecha_hasta"]
+            st.caption(f"📆 {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
+        else:
+            # Modo manual: mostrar calendarios
+            st.session_state["fecha_atajo"] = "Ingresar fecha manualmente"
+            st.markdown("*Seleccioná las fechas:*")
+            fecha_desde = st.date_input(
                 "Desde",
-                value=fmt_date_ar(st.session_state.get("fecha_desde", datetime.date.today())),
-                key="txt_fecha_desde",
-                label_visibility="collapsed",
-                placeholder="dd/mm/aaaa",
+                value=st.session_state.get("fecha_desde", datetime.date.today().replace(day=1)),
+                key="cal_fecha_desde",
+                format="DD/MM/YYYY",
             )
-        with col_h:
-            txt_hasta = st.text_input(
+            fecha_hasta = st.date_input(
                 "Hasta",
-                value=fmt_date_ar(st.session_state.get("fecha_hasta", datetime.date.today())),
-                key="txt_fecha_hasta",
-                label_visibility="collapsed",
-                placeholder="dd/mm/aaaa",
+                value=st.session_state.get("fecha_hasta", datetime.date.today()),
+                key="cal_fecha_hasta",
+                format="DD/MM/YYYY",
             )
-
-        # Parsear inputs manuales
-        def parse_date_ar(s: str) -> datetime.date | None:
-            s = s.strip()
-            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
-                try:
-                    return datetime.datetime.strptime(s, fmt).date()
-                except ValueError:
-                    pass
-            return None
-
-        fecha_desde = parse_date_ar(txt_desde) or st.session_state.get("fecha_desde", datetime.date.today())
-        fecha_hasta = parse_date_ar(txt_hasta) or st.session_state.get("fecha_hasta", datetime.date.today())
-        st.session_state["fecha_desde"] = fecha_desde
-        st.session_state["fecha_hasta"] = fecha_hasta
-
-        st.caption(f"📆 {fmt_date_ar(fecha_desde)} → {fmt_date_ar(fecha_hasta)}")
+            st.session_state["fecha_desde"] = fecha_desde
+            st.session_state["fecha_hasta"] = fecha_hasta
+            if fecha_desde > fecha_hasta:
+                st.warning("⚠️ La fecha desde es posterior a la fecha hasta.")
 
         st.markdown("---")
 
         # ── Filtros Adicionales ───────────────────────────────────────────────
-        st.markdown("**🏢 Empresa**")
-        empresas_lista = sorted(df_all["empresa"].dropna().unique().tolist())
-        sel_empresa = st.multiselect("Empresa", empresas_lista, default=[], key="fil_empresa",
-                                     label_visibility="collapsed")
+        # Los obtenemos de los datos ya cargados (se cargan después)
+        # Los guardamos como placeholders por ahora
+        st.markdown("**Otros filtros** *(se aplican sobre los datos del período)*")
 
-        st.markdown("**👤 Vendedor**")
-        vendedores_lista = sorted(df_all["vendedo"].dropna().unique().tolist())
-        sel_vendedor = st.multiselect("Vendedor", vendedores_lista, default=[], key="fil_vendedor",
-                                      label_visibility="collapsed")
-
-        st.markdown("**📦 Rubro**")
-        rubros_lista = sorted(df_all["rubro"].dropna().unique().tolist())
-        sel_rubro = st.multiselect("Rubro", rubros_lista, default=[], key="fil_rubro",
-                                   label_visibility="collapsed")
-
-        st.markdown("**📄 Formulario**")
-        forms_lista = sorted(df_all["formulario"].dropna().unique().tolist())
-        sel_form = st.multiselect("Formulario", forms_lista, default=[], key="fil_form",
-                                  label_visibility="collapsed")
-
-        st.markdown("**🗺️ Provincia**")
-        prov_lista = sorted(df_all["provincia"].dropna().unique().tolist())
-        sel_prov = st.multiselect("Provincia", prov_lista, default=[], key="fil_prov",
-                                  label_visibility="collapsed")
+        sel_empresa  = st.multiselect("🏢 Empresa",    [], key="fil_empresa",  placeholder="Todas las empresas")
+        sel_vendedor = st.multiselect("👤 Vendedor",   [], key="fil_vendedor", placeholder="Todos los vendedores")
+        sel_rubro    = st.multiselect("📦 Rubro",      [], key="fil_rubro",    placeholder="Todos los rubros")
+        sel_form     = st.multiselect("📄 Formulario", [], key="fil_form",     placeholder="Todos los formularios")
+        sel_prov     = st.multiselect("🗺️ Provincia",  [], key="fil_prov",     placeholder="Todas las provincias")
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  APLICAR FILTROS
+    #  CARGA DE DATOS SEGÚN PERÍODO SELECCIONADO
     # ══════════════════════════════════════════════════════════════════════════
-    df = df_all.copy()
+    fecha_desde_iso = fecha_desde.strftime("%Y-%m-%d")
+    fecha_hasta_iso = fecha_hasta.strftime("%Y-%m-%d")
 
-    # Filtro de fechas
-    df = df[
-        (df["fecha"].dt.date >= fecha_desde) &
-        (df["fecha"].dt.date <= fecha_hasta)
-    ]
-
-    if sel_empresa:
-        df = df[df["empresa"].isin(sel_empresa)]
-    if sel_vendedor:
-        df = df[df["vendedo"].isin(sel_vendedor)]
-    if sel_rubro:
-        df = df[df["rubro"].isin(sel_rubro)]
-    if sel_form:
-        df = df[df["formulario"].isin(sel_form)]
-    if sel_prov:
-        df = df[df["provincia"].isin(sel_prov)]
+    with st.spinner(f"⏳ Cargando ventas {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}..."):
+        df = load_sales_range(fecha_desde_iso, fecha_hasta_iso)
 
     if df.empty:
-        st.info("📭 No hay ventas que coincidan con los filtros seleccionados.")
+        st.warning("📭 No hay ventas en el período seleccionado.")
+        col_info1, col_info2 = st.columns(2)
+        with col_info1:
+            st.info(f"**Período:** {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
+        with col_info2:
+            st.info(f"**Total en base de datos:** {total_bd:,} registros")
         _render_uploader()
+        return
+
+    # ── Actualizar filtros del sidebar con valores reales del período ─────────
+    # (Streamlit no permite modificar widgets ya renderizados, pero podemos mostrar
+    #  la info de opciones disponibles como texto complementario)
+
+    # Aplicar filtros adicionales si el usuario seleccionó algo
+    df_filtrado = df.copy()
+    if sel_empresa:
+        df_filtrado = df_filtrado[df_filtrado["empresa"].isin(sel_empresa)]
+    if sel_vendedor:
+        df_filtrado = df_filtrado[df_filtrado["vendedo"].isin(sel_vendedor)]
+    if sel_rubro:
+        df_filtrado = df_filtrado[df_filtrado["rubro"].isin(sel_rubro)]
+    if sel_form:
+        df_filtrado = df_filtrado[df_filtrado["formulario"].isin(sel_form)]
+    if sel_prov:
+        df_filtrado = df_filtrado[df_filtrado["provincia"].isin(sel_prov)]
+
+    if df_filtrado.empty:
+        st.info("📭 Los filtros adicionales no devuelven resultados. Revisá las selecciones.")
         return
 
     # ══════════════════════════════════════════════════════════════════════════
     #  KPIs
     # ══════════════════════════════════════════════════════════════════════════
-    total_impo     = df["impo"].sum()
-    total_bultos   = df["bultos"].sum()
-    total_unidades = df["unidades"].sum()
-    cant_clientes  = df["cod_clien"].nunique()
-    cant_registros = len(df)
+    total_impo     = df_filtrado["impo"].sum()
+    total_bultos   = df_filtrado["bultos"].sum()
+    total_unidades = df_filtrado["unidades"].sum() if "unidades" in df_filtrado.columns else 0
+    cant_clientes  = df_filtrado["cod_clien"].nunique()
+    cant_registros = len(df_filtrado)
 
     k1, k2, k3, k4, k5 = st.columns(5)
+
     def _kpi(col, title, value, sub=""):
         col.markdown(f"""
         <div class="kpi-card">
@@ -611,19 +421,32 @@ def render_gestion_dashboard():
             <p class="kpi-sub">{sub}</p>
         </div>""", unsafe_allow_html=True)
 
-    _kpi(k1, "💰 Impo Neto",      f"$ {fmt_num_ar(total_impo, 2)}",   f"Período: {fmt_date_ar(fecha_desde)} → {fmt_date_ar(fecha_hasta)}")
-    _kpi(k2, "📦 Bultos",         fmt_num_ar(total_bultos, 2),          f"{cant_registros:,} ítems procesados")
-    _kpi(k3, "🔢 Unidades",       fmt_num_ar(total_unidades, 0),        "Unidades despachadas")
-    _kpi(k4, "🤝 Clientes",       f"{cant_clientes:,}",                 "Clientes únicos")
-    _kpi(k5, "📋 Comprobantes",   f"{df['numero'].nunique():,}",        "Números únicos")
+    _kpi(k1, "💰 Impo Neto",    f"$ {fmt_num_ar(total_impo, 2)}",  f"{fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
+    _kpi(k2, "📦 Bultos",       fmt_num_ar(total_bultos, 2),        f"{cant_registros:,} ítems")
+    _kpi(k3, "🔢 Unidades",     fmt_num_ar(total_unidades, 0),      "Unidades despachadas")
+    _kpi(k4, "🤝 Clientes",     f"{cant_clientes:,}",               "Clientes únicos")
+    _kpi(k5, "📋 Comprobantes", f"{df_filtrado['numero'].nunique():,}", "Números únicos")
+
+    # Info de disponibilidad de filtros adicionales
+    with st.expander("ℹ️ Valores disponibles para filtros adicionales en este período"):
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5)
+        def _list_vals(col, label, series):
+            vals = sorted(series.dropna().unique().tolist())
+            col.markdown(f"**{label}** ({len(vals)})")
+            col.caption(" · ".join(str(v) for v in vals[:20]) + ("..." if len(vals) > 20 else ""))
+        _list_vals(fc1, "Empresas",    df_filtrado["empresa"])
+        _list_vals(fc2, "Vendedores",  df_filtrado["vendedo"])
+        _list_vals(fc3, "Rubros",      df_filtrado["rubro"])
+        _list_vals(fc4, "Formularios", df_filtrado["formulario"])
+        _list_vals(fc5, "Provincias",  df_filtrado["provincia"])
 
     # ══════════════════════════════════════════════════════════════════════════
     #  CONFIGURACIÓN DEL CUADRO DINÁMICO
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown('<p class="section-title">⚙️ Configuración del Cuadro Dinámico</p>', unsafe_allow_html=True)
 
-    dim_labels = {v: k for k, v in DIMENSIONES_DISPONIBLES.items()}  # label→campo
     label_list = list(DIMENSIONES_DISPONIBLES.values())
+    map_label_to_field = {v: k for k, v in DIMENSIONES_DISPONIBLES.items()}
 
     col_cfg1, col_cfg2, col_cfg3 = st.columns([3, 2, 2])
 
@@ -631,66 +454,62 @@ def render_gestion_dashboard():
         st.markdown("**Filas — Agrupación (izq → der)**")
         default_row_labels = [DIMENSIONES_DISPONIBLES[d] for d in DEFAULT_ROW_DIMS if d in DIMENSIONES_DISPONIBLES]
         sel_row_labels = st.multiselect(
-            "Dimensiones de fila",
-            options=label_list,
-            default=default_row_labels,
-            key="pivot_row_dims",
+            "Dimensiones de fila", options=label_list,
+            default=default_row_labels, key="pivot_row_dims",
             label_visibility="collapsed",
         )
 
     with col_cfg2:
-        st.markdown("**Bandas de Columna (opcional)**")
+        st.markdown("**Bandas de Columna** *(opcional)*")
         default_col_labels = [DIMENSIONES_DISPONIBLES[d] for d in DEFAULT_COL_DIMS if d in DIMENSIONES_DISPONIBLES]
         sel_col_labels = st.multiselect(
-            "Dimensiones de columna",
-            options=["Año", "Mes"],
-            default=default_col_labels,
-            key="pivot_col_dims",
+            "Bandas de columna", options=["Año", "Mes"],
+            default=default_col_labels, key="pivot_col_dims",
             label_visibility="collapsed",
         )
 
     with col_cfg3:
-        st.markdown("**Métricas a mostrar**")
+        st.markdown("**Métricas**")
         sel_metrics_labels = st.multiselect(
-            "Métricas",
-            options=list(METRICAS.values()),
-            default=list(METRICAS.values()),
-            key="pivot_metrics",
+            "Métricas", options=list(METRICAS.values()),
+            default=list(METRICAS.values()), key="pivot_metrics",
             label_visibility="collapsed",
         )
 
-    # Reorden de dimensiones de fila
+    # Reorden de dimensiones con botones ← →
     if sel_row_labels:
         st.markdown("**🔀 Reordenar dimensiones de fila:**")
-        rc = st.columns(len(sel_row_labels) + 1)
-        current = list(sel_row_labels)
-        if "pivot_row_order" not in st.session_state or set(st.session_state["pivot_row_order"]) != set(current):
-            st.session_state["pivot_row_order"] = current
+        current_set = set(sel_row_labels)
+        if "pivot_row_order" not in st.session_state or set(st.session_state["pivot_row_order"]) != current_set:
+            st.session_state["pivot_row_order"] = list(sel_row_labels)
         ordered = st.session_state["pivot_row_order"]
+        # Sincronizar si el usuario quitó/agregó ítems
+        ordered = [x for x in ordered if x in current_set]
+        for x in sel_row_labels:
+            if x not in ordered:
+                ordered.append(x)
+        st.session_state["pivot_row_order"] = ordered
 
+        rc = st.columns(len(ordered))
         for i, lbl in enumerate(ordered):
             with rc[i]:
-                col_btns = st.columns([1, 1])
-                if i > 0:
-                    if col_btns[0].button("←", key=f"move_left_{i}", help=f"Mover '{lbl}' a la izquierda"):
-                        ordered[i - 1], ordered[i] = ordered[i], ordered[i - 1]
-                        st.session_state["pivot_row_order"] = ordered
-                        st.rerun()
-                if i < len(ordered) - 1:
-                    if col_btns[1].button("→", key=f"move_right_{i}", help=f"Mover '{lbl}' a la derecha"):
-                        ordered[i + 1], ordered[i] = ordered[i], ordered[i + 1]
-                        st.session_state["pivot_row_order"] = ordered
-                        st.rerun()
+                c1, c2 = st.columns(2)
+                if i > 0 and c1.button("←", key=f"ml_{i}"):
+                    ordered[i - 1], ordered[i] = ordered[i], ordered[i - 1]
+                    st.session_state["pivot_row_order"] = ordered
+                    st.rerun()
+                if i < len(ordered) - 1 and c2.button("→", key=f"mr_{i}"):
+                    ordered[i + 1], ordered[i] = ordered[i], ordered[i + 1]
+                    st.session_state["pivot_row_order"] = ordered
+                    st.rerun()
                 st.caption(f"`{i+1}. {lbl}`")
 
         sel_row_labels = st.session_state["pivot_row_order"]
 
-    # Convertir labels → campos
-    map_label_to_field = {v: k for k, v in DIMENSIONES_DISPONIBLES.items()}
-    row_dims_fields = [map_label_to_field[l] for l in sel_row_labels if l in map_label_to_field]
-    col_dims_fields = [map_label_to_field[l] for l in sel_col_labels if l in map_label_to_field]
-    metrics_inv = {v: k for k, v in METRICAS.items()}
-    metrics_fields = [metrics_inv[l] for l in sel_metrics_labels if l in metrics_inv]
+    row_dims_fields  = [map_label_to_field[l] for l in sel_row_labels if l in map_label_to_field]
+    col_dims_fields  = [map_label_to_field[l] for l in sel_col_labels if l in map_label_to_field]
+    metrics_inv      = {v: k for k, v in METRICAS.items()}
+    metrics_fields   = [metrics_inv[l] for l in sel_metrics_labels if l in metrics_inv]
 
     # ══════════════════════════════════════════════════════════════════════════
     #  CUADRO DINÁMICO
@@ -698,89 +517,61 @@ def render_gestion_dashboard():
     st.markdown('<p class="section-title">📋 Cuadro Dinámico de Ventas</p>', unsafe_allow_html=True)
 
     if not row_dims_fields:
-        st.info("Seleccioná al menos una dimensión de fila para generar el cuadro.")
+        st.info("Seleccioná al menos una dimensión de fila.")
     elif not metrics_fields:
         st.info("Seleccioná al menos una métrica.")
     else:
         with st.spinner("Construyendo cuadro dinámico..."):
-            if col_dims_fields:
-                # Con bandas de columna — usamos pivot_table de pandas
-                valid_row = [r for r in row_dims_fields if r in df.columns]
-                valid_col = [c for c in col_dims_fields if c in df.columns]
-                valid_met = [m for m in metrics_fields if m in df.columns]
+            valid_row = [r for r in row_dims_fields if r in df_filtrado.columns]
+            valid_col = [c for c in col_dims_fields if c in df_filtrado.columns]
+            valid_met = [m for m in metrics_fields if m in df_filtrado.columns]
 
-                if valid_row and valid_met:
-                    try:
-                        # Tabla pivot por pandas
-                        pt = pd.pivot_table(
-                            df,
-                            index=valid_row,
-                            columns=valid_col if valid_col else None,
-                            values=valid_met,
-                            aggfunc="sum",
-                            margins=True,
-                            margins_name="▌ TOTAL",
-                            observed=True,
-                            fill_value=0,
-                        )
-
-                        # Renombrar columnas de métricas
-                        if isinstance(pt.columns, pd.MultiIndex):
-                            new_cols = []
-                            for col_tuple in pt.columns:
-                                metric_label = METRICAS.get(col_tuple[0], col_tuple[0])
-                                rest = " | ".join(str(x) for x in col_tuple[1:])
-                                new_cols.append(f"{rest} | {metric_label}" if rest else metric_label)
-                            pt.columns = new_cols
-                        else:
-                            pt.columns = [METRICAS.get(c, c) for c in pt.columns]
-
-                        # Formatear índice
-                        pt.index.names = [DIMENSIONES_DISPONIBLES.get(n, n) for n in pt.index.names]
-
-                        # Formatear números como string argentino
-                        pt_display = pt.copy()
-                        for c in pt_display.columns:
-                            pt_display[c] = pt_display[c].apply(lambda x: fmt_num_ar(x, 2))
-
-                        st.markdown('<div class="pivot-container">', unsafe_allow_html=True)
-                        st.dataframe(
-                            pt_display,
-                            use_container_width=True,
-                            height=600,
-                        )
-                        st.markdown('</div>', unsafe_allow_html=True)
-
-                        # Info de conteo
-                        st.caption(f"📊 {len(df):,} registros · {df['cod_clien'].nunique():,} clientes · {df['numero'].nunique():,} comprobantes")
-
-                    except Exception as e:
-                        st.error(f"Error generando pivot: {e}")
-                        import traceback
-                        st.code(traceback.format_exc())
-                else:
-                    st.warning("Algunas dimensiones seleccionadas no están disponibles en los datos.")
-
+            if not valid_row or not valid_met:
+                st.warning("Alguna dimensión o métrica no está disponible en los datos.")
             else:
-                # Sin bandas de columna — tabla plana con subtotales
-                tbl = _add_row_subtotals_flat(
-                    df.groupby([r for r in row_dims_fields if r in df.columns], observed=True)
-                    [[m for m in metrics_fields if m in df.columns]].sum().reset_index(),
-                    row_dims_fields,
-                    metrics_fields,
-                )
-                if not tbl.empty:
-                    # Renombrar columnas de dimensión
-                    rename_map = {k: v for k, v in DIMENSIONES_DISPONIBLES.items() if k in tbl.columns}
-                    tbl = tbl.rename(columns=rename_map)
-                    # Formatear métricas
-                    for m_label in list(METRICAS.values()):
-                        if m_label in tbl.columns:
-                            tbl[m_label] = tbl[m_label].apply(lambda x: fmt_num_ar(x, 2))
+                try:
+                    pt = pd.pivot_table(
+                        df_filtrado,
+                        index=valid_row,
+                        columns=valid_col if valid_col else None,
+                        values=valid_met,
+                        aggfunc="sum",
+                        margins=True,
+                        margins_name="▌ TOTAL",
+                        observed=True,
+                        fill_value=0,
+                    )
+
+                    # Renombrar columnas
+                    if isinstance(pt.columns, pd.MultiIndex):
+                        new_cols = []
+                        for col_tuple in pt.columns:
+                            m_label = METRICAS.get(col_tuple[0], col_tuple[0])
+                            rest = " | ".join(str(x) for x in col_tuple[1:])
+                            new_cols.append(f"{rest} | {m_label}" if rest else m_label)
+                        pt.columns = new_cols
+                    else:
+                        pt.columns = [METRICAS.get(c, c) for c in pt.columns]
+
+                    # Renombrar índices
+                    pt.index.names = [DIMENSIONES_DISPONIBLES.get(n, n) for n in pt.index.names]
+
+                    # Formatear números argentinos
+                    pt_display = pt.applymap(lambda x: fmt_num_ar(x, 2) if isinstance(x, (int, float, np.number)) else x)
+
                     st.markdown('<div class="pivot-container">', unsafe_allow_html=True)
-                    st.dataframe(tbl, use_container_width=True, height=600, hide_index=True)
+                    st.dataframe(pt_display, use_container_width=True, height=600)
                     st.markdown('</div>', unsafe_allow_html=True)
-                    st.caption(f"📊 {len(df):,} registros · {df['cod_clien'].nunique():,} clientes")
+                    st.caption(
+                        f"📊 {cant_registros:,} registros · "
+                        f"{cant_clientes:,} clientes · "
+                        f"{df_filtrado['numero'].nunique():,} comprobantes"
+                    )
+
+                except Exception as e:
+                    st.error(f"Error generando pivot: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
     # ══════════════════════════════════════════════════════════════════════════
     #  CARGA HISTÓRICA
@@ -788,7 +579,7 @@ def render_gestion_dashboard():
     _render_uploader()
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  MOTOR IA — GEMINI BRAIN
+    #  GEMINI BRAIN
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown('<div class="ia-panel">', unsafe_allow_html=True)
     st.markdown(
@@ -797,8 +588,8 @@ def render_gestion_dashboard():
         unsafe_allow_html=True,
     )
     st.write(
-        "El motor de IA analiza **toda la tabla de ventas** (independientemente de los filtros "
-        "activos) y responde consultas estratégicas con datos reales."
+        "El motor de IA analiza **toda la tabla de ventas** (independientemente de los filtros activos) "
+        "y responde consultas estratégicas con datos reales."
     )
 
     if not api_key:
@@ -806,10 +597,18 @@ def render_gestion_dashboard():
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    # Contexto agregado de TODA la tabla (df_all — sin filtros UI)
-    @st.cache_data(ttl=600, show_spinner=False)
-    def build_ia_context(total_rows: int) -> str:
-        ctx_df = df_all.groupby(
+    # Contexto de TODA la tabla (independiente de filtros UI)
+    with st.spinner("Preparando contexto histórico completo para el Brain..."):
+        df_ia = load_sales_full_for_ia()
+
+    if df_ia.empty:
+        st.warning("No se pudo cargar el contexto histórico.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _build_ctx(n_rows: int) -> str:
+        ctx = df_ia.groupby(
             ["_año", "_mes", "vendedo", "rubro", "provincia", "formulario"],
             observed=True,
         ).agg(
@@ -817,39 +616,33 @@ def render_gestion_dashboard():
             bultos=("bultos", "sum"),
             cant_items=("impo", "count"),
             clientes=("cod_clien", "nunique"),
-        ).reset_index()
-        ctx_df = ctx_df.sort_values("impo_neto", ascending=False).head(200)
-        return ctx_df.to_string(index=False)
+        ).reset_index().sort_values("impo_neto", ascending=False).head(200)
+        return ctx.to_string(index=False)
 
-    context_str = build_ia_context(total_registros)
+    context_str = _build_ctx(len(df_ia))
 
-    # KPIs globales (toda la tabla)
-    kpi_global = {
-        "impo_total":   df_all["impo"].sum(),
-        "bultos_total": df_all["bultos"].sum(),
-        "clientes":     df_all["cod_clien"].nunique(),
-        "registros":    len(df_all),
-        "fecha_min":    df_all["fecha"].min().strftime("%d/%m/%Y"),
-        "fecha_max":    df_all["fecha"].max().strftime("%d/%m/%Y"),
+    kpi_g = {
+        "impo_total":   df_ia["impo"].sum(),
+        "bultos_total": df_ia["bultos"].sum(),
+        "clientes":     df_ia["cod_clien"].nunique(),
+        "registros":    len(df_ia),
+        "fecha_min":    df_ia["fecha"].min().strftime("%d/%m/%Y") if not df_ia.empty else "N/A",
+        "fecha_max":    df_ia["fecha"].max().strftime("%d/%m/%Y") if not df_ia.empty else "N/A",
     }
 
-    col_ia1, col_ia2, col_ia3, col_ia4 = st.columns(4)
+    ia1, ia2, ia3, ia4 = st.columns(4)
     prompt_ia = None
-    with col_ia1:
-        if st.button("📊 Informe Ejecutivo", use_container_width=True, key="ia_btn1"):
-            prompt_ia = "Generá un informe ejecutivo de alto nivel resumiendo el comportamiento comercial histórico: vendedores líderes, rubros principales, evolución por año y sugerencias estratégicas."
-    with col_ia2:
-        if st.button("🚨 Alertas de Desvíos", use_container_width=True, key="ia_btn2"):
-            prompt_ia = "Detectá alertas comerciales: ¿hay excesiva dependencia en algún vendedor, rubro o provincia? ¿Hay períodos de caída marcada? ¿Concentración de clientes?"
-    with col_ia3:
-        if st.button("💡 Plan Comercial", use_container_width=True, key="ia_btn3"):
-            prompt_ia = "Proponé 3 iniciativas comerciales concretas para expandir la facturación basándote en la distribución actual de ventas por región, rubro y vendedor."
-    with col_ia4:
-        if st.button("📈 Tendencias", use_container_width=True, key="ia_btn4"):
-            prompt_ia = "Analizá las tendencias de crecimiento o decrecimiento mensual/anual. ¿Qué meses son los pico? ¿Hay estacionalidad marcada? ¿Qué año fue el mejor?"
+    if ia1.button("📊 Informe Ejecutivo",      use_container_width=True, key="ia_btn1"):
+        prompt_ia = "Generá un informe ejecutivo de alto nivel resumiendo el comportamiento comercial histórico: vendedores líderes, rubros principales, evolución por año y sugerencias estratégicas."
+    if ia2.button("🚨 Alertas de Desvíos",     use_container_width=True, key="ia_btn2"):
+        prompt_ia = "Detectá alertas comerciales: ¿hay excesiva dependencia en algún vendedor, rubro o provincia? ¿Hay períodos de caída marcada? ¿Concentración de clientes?"
+    if ia3.button("💡 Plan Comercial",         use_container_width=True, key="ia_btn3"):
+        prompt_ia = "Proponé 3 iniciativas comerciales concretas para expandir la facturación basándote en la distribución actual de ventas por región, rubro y vendedor."
+    if ia4.button("📈 Tendencias y Estación.", use_container_width=True, key="ia_btn4"):
+        prompt_ia = "Analizá las tendencias de crecimiento o decrecimiento mensual/anual. ¿Qué meses son los pico? ¿Hay estacionalidad marcada? ¿Qué año fue el mejor?"
 
     pregunta_libre = st.text_input(
-        "💬 Hacé una consulta personalizada sobre las ventas:",
+        "💬 Hacé una consulta personalizada sobre toda la base de ventas:",
         placeholder="Ej: ¿Qué vendedor tuvo mejor performance en 2025? ¿Cuál fue el mes con más bultos?",
         key="ia_pregunta_libre",
     )
@@ -864,13 +657,13 @@ TABLA DE VENTAS HISTÓRICAS (Top 200 combinaciones por importe, campos: Año | M
 {context_str}
 
 KPIs GLOBALES DE TODA LA BASE (sin filtros):
-- Facturación Total Histórica: $ {kpi_global['impo_total']:,.2f}
-- Bultos Totales: {kpi_global['bultos_total']:,.0f}
-- Clientes Únicos Históricos: {kpi_global['clientes']:,}
-- Total de Registros: {kpi_global['registros']:,}
-- Período: {kpi_global['fecha_min']} → {kpi_global['fecha_max']}
+- Facturación Total Histórica: $ {kpi_g['impo_total']:,.2f}
+- Bultos Totales: {kpi_g['bultos_total']:,.0f}
+- Clientes Únicos Históricos: {kpi_g['clientes']:,}
+- Total de Registros: {kpi_g['registros']:,}
+- Período: {kpi_g['fecha_min']} → {kpi_g['fecha_max']}
 
-NOTA: Los registros con importe negativo son devoluciones (DEVOLUCION B). El impo_neto ya refleja el neto (ventas - devoluciones).
+NOTA: Los registros con importe negativo son devoluciones (DEVOLUCION B). El impo_neto ya refleja el neto.
 
 CONSULTA DEL USUARIO: "{prompt_final}"
 
@@ -891,58 +684,55 @@ Sé directo, ejecutivo y aportá valor real con números concretos extraídos de
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CARGA HISTÓRICA (extraída como función auxiliar)
+#  CARGA HISTÓRICA (auxiliar)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_uploader():
     with st.expander("📤 Carga Histórica de Ventas (ventas.dbi)"):
         st.write(
             "Subí un archivo `ventas.dbi` histórico para importarlo de forma incremental en Supabase. "
-            "El sistema evitará duplicados usando restricciones de base de datos."
+            "El sistema evita duplicados usando la restricción única de la base de datos."
         )
         uploaded_file = st.file_uploader(
             "Seleccioná el archivo ventas.dbi",
             type=["dbi"],
-            key="uploader_ventas_history_v2",
+            key="uploader_ventas_v3",
         )
-
         if uploaded_file is not None:
-            if st.button("🚀 Iniciar Procesamiento e Importación", use_container_width=True, key="btn_ventas_import_v2"):
+            if st.button("🚀 Iniciar Procesamiento e Importación", use_container_width=True, key="btn_import_v3"):
                 import os
-                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+                temp_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"
+                )
                 os.makedirs(temp_dir, exist_ok=True)
-                temp_path = os.path.join(temp_dir, "temp_ventas_history.dbi")
+                temp_path = os.path.join(temp_dir, "temp_ventas_hist.dbi")
 
-                with open(temp_path, "wb") as f_temp:
-                    f_temp.write(uploaded_file.getbuffer())
+                with open(temp_path, "wb") as f_t:
+                    f_t.write(uploaded_file.getbuffer())
 
                 try:
                     import dbf
 
-                    def _str(v):
-                        return str(v).strip() if v else ""
-                    def _int(v):
+                    def _s(v):  return str(v).strip() if v else ""
+                    def _i(v):
                         try: return int(v)
                         except: return 0
-                    def _float(v):
+                    def _f(v):
                         try: return float(v)
                         except: return 0.0
-                    def _date(v):
+                    def _d(v):
                         if not v: return None
                         if isinstance(v, (datetime.date, datetime.datetime)):
                             return v.strftime("%Y-%m-%d")
                         s = str(v).strip()
-                        if len(s) >= 10 and s[4] == "-":
-                            return s[:10]
+                        if len(s) >= 10 and s[4] == "-": return s[:10]
                         try:
-                            parts = s.split("/")
-                            if len(parts) == 3:
-                                d, m, y = parts
-                                return f"{y.zfill(4)}-{m.zfill(2)}-{d.zfill(2)}"
+                            p = s.split("/")
+                            if len(p) == 3: return f"{p[2].zfill(4)}-{p[1].zfill(2)}-{p[0].zfill(2)}"
                         except: pass
                         return None
 
-                    def _dummy_memo(path):
+                    def _memo(path):
                         base = os.path.splitext(path)[0]
                         for ext in [".dbt", ".fpt", ".DBT", ".FPT"]:
                             p = base + ext
@@ -955,56 +745,54 @@ def _render_uploader():
                                             f.write(b"\x00\x00\x00\x01\x00\x00\x00\x40" + b"\x00" * 504)
                                 except: pass
 
-                    _dummy_memo(temp_path)
+                    _memo(temp_path)
 
-                    total_records = 0
-                    with dbf.Table(temp_path, codepage="cp1252") as table:
-                        table.open()
-                        if table._meta.memo:
-                            _orig = table._meta.memo.get_memo
-                            def _safe(b):
-                                try: return _orig(b)
+                    total_rec = 0
+                    with dbf.Table(temp_path, codepage="cp1252") as t:
+                        t.open()
+                        if t._meta.memo:
+                            _o = t._meta.memo.get_memo
+                            def _sg(b):
+                                try: return _o(b)
                                 except: return b""
-                            table._meta.memo.get_memo = _safe
-                        total_records = len(table)
+                            t._meta.memo.get_memo = _sg
+                        total_rec = len(t)
 
-                    st.info(f"Detectados {total_records:,} registros. Iniciando importación...")
+                    st.info(f"Detectados {total_rec:,} registros. Iniciando importación...")
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     batch_dict = {}
                     batch_size = 1000
                     total_proc = 0
 
-                    with dbf.Table(temp_path, codepage="cp1252") as table:
-                        table.open()
-                        if table._meta.memo:
-                            _orig = table._meta.memo.get_memo
-                            def _safe(b):
-                                try: return _orig(b)
+                    with dbf.Table(temp_path, codepage="cp1252") as t:
+                        t.open()
+                        if t._meta.memo:
+                            _o = t._meta.memo.get_memo
+                            def _sg(b):
+                                try: return _o(b)
                                 except: return b""
-                            table._meta.memo.get_memo = _safe
+                            t._meta.memo.get_memo = _sg
 
-                        for rec in table:
-                            fecha_iso = _date(rec.FECHA)
-                            if not fecha_iso:
-                                continue
+                        for rec in t:
+                            fd = _d(rec.FECHA)
+                            if not fd: continue
                             item = {
-                                "rubro": _str(rec.RUBRO), "fecha": fecha_iso,
-                                "empresa": _str(rec.EMPRESA), "subrubro": _str(rec.SUBRUBRO),
-                                "numero": _int(rec.NUMERO), "localidad": _str(rec.LOCALIDAD),
-                                "provincia": _str(rec.PROVINCIA), "formulario": _str(rec.FORMULARIO),
-                                "e_mail": _str(rec.E_MAIL), "telefono": _str(rec.TELEFONO),
-                                "pais": _str(rec.PAIS), "codigo": _int(rec.CODIGO),
-                                "cod_alfa": _str(rec.COD_ALFA), "unidades": _float(rec.UNIDADES),
-                                "codigocomp": _int(rec.CODIGOCOMP), "tipo": _int(rec.TIPO),
-                                "dto": _float(rec.DTO), "dto1": _float(rec.DTO1),
-                                "dto2": _float(rec.DTO2), "alt_bonifi": _str(rec.ALT_BONIFI),
-                                "grupo": _str(rec.GRUPO), "sinonimo": _str(rec.SINONIMO),
-                                "ean": _str(rec.EAN), "clien": _str(rec.CLIEN),
-                                "cod_clien": _int(rec.COD_CLIEN), "producto": _str(rec.PRODUCTO),
-                                "vendedo": _str(rec.VENDEDO), "domicilio": _str(rec.DOMICILIO),
-                                "deposito": _str(rec.DEPOSITO), "bultos": _float(rec.BULTOS),
-                                "impo": _float(rec.IMPO),
+                                "rubro": _s(rec.RUBRO), "fecha": fd,
+                                "empresa": _s(rec.EMPRESA), "subrubro": _s(rec.SUBRUBRO),
+                                "numero": _i(rec.NUMERO), "localidad": _s(rec.LOCALIDAD),
+                                "provincia": _s(rec.PROVINCIA), "formulario": _s(rec.FORMULARIO),
+                                "e_mail": _s(rec.E_MAIL), "telefono": _s(rec.TELEFONO),
+                                "pais": _s(rec.PAIS), "codigo": _i(rec.CODIGO),
+                                "cod_alfa": _s(rec.COD_ALFA), "unidades": _f(rec.UNIDADES),
+                                "codigocomp": _i(rec.CODIGOCOMP), "tipo": _i(rec.TIPO),
+                                "dto": _f(rec.DTO), "dto1": _f(rec.DTO1), "dto2": _f(rec.DTO2),
+                                "alt_bonifi": _s(rec.ALT_BONIFI), "grupo": _s(rec.GRUPO),
+                                "sinonimo": _s(rec.SINONIMO), "ean": _s(rec.EAN),
+                                "clien": _s(rec.CLIEN), "cod_clien": _i(rec.COD_CLIEN),
+                                "producto": _s(rec.PRODUCTO), "vendedo": _s(rec.VENDEDO),
+                                "domicilio": _s(rec.DOMICILIO), "deposito": _s(rec.DEPOSITO),
+                                "bultos": _f(rec.BULTOS), "impo": _f(rec.IMPO),
                             }
                             key = (item["fecha"], item["empresa"], item["formulario"],
                                    item["numero"], item["cod_clien"], item["cod_alfa"], item["bultos"])
@@ -1016,8 +804,8 @@ def _render_uploader():
                                     on_conflict="fecha,empresa,formulario,numero,cod_clien,cod_alfa,bultos"
                                 ).execute()
                                 total_proc += len(batch_dict)
-                                status_text.text(f"Importados: {total_proc:,} / {total_records:,}")
-                                progress_bar.progress(min(1.0, total_proc / total_records))
+                                status_text.text(f"Importados: {total_proc:,} / {total_rec:,}")
+                                progress_bar.progress(min(1.0, total_proc / total_rec))
                                 batch_dict = {}
 
                         if batch_dict:
@@ -1030,7 +818,8 @@ def _render_uploader():
                             status_text.text(f"Completado: {total_proc:,} registros importados.")
 
                     st.success(f"🎉 ¡Importación exitosa! {total_proc:,} registros procesados.")
-                    load_sales_full.clear()
+                    load_sales_range.clear()
+                    load_sales_full_for_ia.clear()
                     st.rerun()
 
                 except Exception as e:
