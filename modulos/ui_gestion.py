@@ -57,18 +57,23 @@ ATAJOS = [
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CARGA DE DATOS — Paginación completa sin límite artificial
+#  Supabase devuelve como máximo 1.000 registros por request (límite del servidor).
+#  Usamos PAGE = 1000 y un loop que sigue hasta que la página retorna < PAGE filas.
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Límite real de Supabase por request (no configurable desde el cliente)
+SUPABASE_PAGE = 1000
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_sales_range(fecha_desde_iso: str, fecha_hasta_iso: str) -> pd.DataFrame:
     """
-    Carga TODOS los registros de ventas en el rango dado, usando paginación.
+    Carga TODOS los registros de ventas en el rango dado, sin límite de cantidad.
+    Pagina de a 1.000 (máximo de Supabase) hasta agotar todos los registros.
     Retorna un DataFrame limpio y tipado.
     """
     if supabase is None:
         return pd.DataFrame()
     try:
-        PAGE = 10_000
         offset = 0
         frames = []
         cols = (
@@ -82,15 +87,16 @@ def load_sales_range(fecha_desde_iso: str, fecha_hasta_iso: str) -> pd.DataFrame
                 .select(cols)
                 .gte("fecha", fecha_desde_iso)
                 .lte("fecha", fecha_hasta_iso)
-                .range(offset, offset + PAGE - 1)
+                .range(offset, offset + SUPABASE_PAGE - 1)
                 .execute()
             )
             if not res.data:
                 break
             frames.append(pd.DataFrame(res.data))
-            if len(res.data) < PAGE:
+            # Si la respuesta tiene menos filas que el límite, es la última página
+            if len(res.data) < SUPABASE_PAGE:
                 break
-            offset += PAGE
+            offset += SUPABASE_PAGE
 
         if not frames:
             return pd.DataFrame()
@@ -110,7 +116,6 @@ def load_sales_full_for_ia() -> pd.DataFrame:
     if supabase is None:
         return pd.DataFrame()
     try:
-        PAGE = 10_000
         offset = 0
         frames = []
         cols = "fecha, rubro, vendedo, provincia, formulario, bultos, impo, cod_clien"
@@ -118,26 +123,26 @@ def load_sales_full_for_ia() -> pd.DataFrame:
             res = (
                 supabase.table("ventas")
                 .select(cols)
-                .range(offset, offset + PAGE - 1)
+                .range(offset, offset + SUPABASE_PAGE - 1)
                 .execute()
             )
             if not res.data:
                 break
             frames.append(pd.DataFrame(res.data))
-            if len(res.data) < PAGE:
+            if len(res.data) < SUPABASE_PAGE:
                 break
-            offset += PAGE
+            offset += SUPABASE_PAGE
 
         if not frames:
             return pd.DataFrame()
 
         df = pd.concat(frames, ignore_index=True)
-        df["fecha"]  = pd.to_datetime(df["fecha"], errors="coerce")
-        df["impo"]   = pd.to_numeric(df["impo"],   errors="coerce").fillna(0.0)
-        df["bultos"] = pd.to_numeric(df["bultos"], errors="coerce").fillna(0.0)
+        df["fecha"]     = pd.to_datetime(df["fecha"], errors="coerce")
+        df["impo"]      = pd.to_numeric(df["impo"],   errors="coerce").fillna(0.0)
+        df["bultos"]    = pd.to_numeric(df["bultos"], errors="coerce").fillna(0.0)
         df["cod_clien"] = pd.to_numeric(df["cod_clien"], errors="coerce").fillna(0).astype(int)
         df["_año"] = df["fecha"].dt.year.astype("Int64").astype(str)
-        df["_mes"] = df["fecha"].dt.month.astype("Int64").astype(str).str.zfill(2)
+        df["_mes"]  = df["fecha"].dt.month.astype("Int64").astype(str).str.zfill(2)
         return df
     except Exception as e:
         return pd.DataFrame()
