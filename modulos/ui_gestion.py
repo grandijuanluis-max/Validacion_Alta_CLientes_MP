@@ -319,17 +319,17 @@ def render_gestion_dashboard():
     total_bd = get_total_count()
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  SIDEBAR — FILTROS
+    #  SIDEBAR BLOQUE 1 — Solo el selector de período
+    #  (Los filtros adicionales van en BLOQUE 2, DESPUÉS de cargar los datos)
     # ══════════════════════════════════════════════════════════════════════════
     with st.sidebar:
         st.markdown("### 🔍 Filtros de Gestión")
         st.caption(f"Base total: {total_bd:,} registros")
         st.markdown("---")
 
-        # ── Selector de período (combo único) ────────────────────────────────
+        # ── Selector de período ──────────────────────────────────────────────────
         st.markdown("**📅 Período**")
 
-        # Inicializar estado
         if "fecha_atajo" not in st.session_state:
             st.session_state["fecha_atajo"] = "Mes Actual"
         if "fecha_desde" not in st.session_state or "fecha_hasta" not in st.session_state:
@@ -337,7 +337,6 @@ def render_gestion_dashboard():
             st.session_state["fecha_desde"] = d0
             st.session_state["fecha_hasta"] = d1
 
-        # Índice actual en la lista
         try:
             idx_actual = ATAJOS.index(st.session_state["fecha_atajo"])
         except ValueError:
@@ -351,7 +350,6 @@ def render_gestion_dashboard():
             label_visibility="collapsed",
         )
 
-        # Actualizar fechas si cambia el atajo (y no es manual)
         if sel_atajo != "Ingresar fecha manualmente":
             if sel_atajo != st.session_state.get("fecha_atajo"):
                 d0, d1 = date_range_for_shortcut(sel_atajo)
@@ -362,7 +360,6 @@ def render_gestion_dashboard():
             fecha_hasta = st.session_state["fecha_hasta"]
             st.caption(f"📆 {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
         else:
-            # Modo manual: mostrar calendarios
             st.session_state["fecha_atajo"] = "Ingresar fecha manualmente"
             st.markdown("*Seleccioná las fechas:*")
             fecha_desde = st.date_input(
@@ -383,17 +380,7 @@ def render_gestion_dashboard():
                 st.warning("⚠️ La fecha desde es posterior a la fecha hasta.")
 
         st.markdown("---")
-
-        # ── Filtros Adicionales ───────────────────────────────────────────────
-        # Los obtenemos de los datos ya cargados (se cargan después)
-        # Los guardamos como placeholders por ahora
-        st.markdown("**Otros filtros** *(se aplican sobre los datos del período)*")
-
-        sel_empresa  = st.multiselect("🏢 Empresa",    [], key="fil_empresa",  placeholder="Todas las empresas")
-        sel_vendedor = st.multiselect("👤 Vendedor",   [], key="fil_vendedor", placeholder="Todos los vendedores")
-        sel_rubro    = st.multiselect("📦 Rubro",      [], key="fil_rubro",    placeholder="Todos los rubros")
-        sel_form     = st.multiselect("📄 Formulario", [], key="fil_form",     placeholder="Todos los formularios")
-        sel_prov     = st.multiselect("🗺️ Provincia",  [], key="fil_prov",     placeholder="Todas las provincias")
+        st.caption("⏳ Cargando datos del período...")
 
     # ══════════════════════════════════════════════════════════════════════════
     #  CARGA DE DATOS SEGÚN PERÍODO SELECCIONADO
@@ -405,7 +392,7 @@ def render_gestion_dashboard():
         df = load_sales_range(fecha_desde_iso, fecha_hasta_iso)
 
     if df.empty:
-        st.warning("📭 No hay ventas en el período seleccionado.")
+        st.warning("💭 No hay ventas en el período seleccionado.")
         col_info1, col_info2 = st.columns(2)
         with col_info1:
             st.info(f"**Período:** {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
@@ -414,11 +401,64 @@ def render_gestion_dashboard():
         _render_uploader()
         return
 
-    # ── Actualizar filtros del sidebar con valores reales del período ─────────
-    # (Streamlit no permite modificar widgets ya renderizados, pero podemos mostrar
-    #  la info de opciones disponibles como texto complementario)
+    # ══════════════════════════════════════════════════════════════════════════
+    #  SIDEBAR BLOQUE 2 — Filtros con opciones reales (se carga después de df)
+    # ══════════════════════════════════════════════════════════════════════════
+    def _opts(col_name):
+        """Valores únicos ordenados, sin vacíos."""
+        if col_name not in df.columns:
+            return []
+        return sorted(v for v in df[col_name].dropna().unique() if v and v != "(Vacío)")
 
-    # Aplicar filtros adicionales si el usuario seleccionó algo
+    opts_empresa  = _opts("empresa")
+    opts_vendedor = _opts("vendedo")
+    opts_rubro    = _opts("rubro")
+    opts_subrubro = _opts("subrubro")
+    opts_form     = _opts("formulario")
+    opts_prov     = _opts("provincia")
+
+    with st.sidebar:
+        st.markdown("**🗳️ Filtros adicionales**")
+        st.caption(f"{len(df):,} registros cargados del período")
+
+        sel_empresa = st.multiselect(
+            "🏢 Empresa",
+            options=opts_empresa,
+            key="fil_empresa",
+            placeholder=f"Todas ({len(opts_empresa)})",
+        )
+        sel_vendedor = st.multiselect(
+            "👤 Vendedor",
+            options=opts_vendedor,
+            key="fil_vendedor",
+            placeholder=f"Todos ({len(opts_vendedor)})",
+        )
+        sel_rubro = st.multiselect(
+            "📦 Rubro",
+            options=opts_rubro,
+            key="fil_rubro",
+            placeholder=f"Todos ({len(opts_rubro)})",
+        )
+        sel_subrubro = st.multiselect(
+            "📂 Sub Rubro",
+            options=opts_subrubro,
+            key="fil_subrubro",
+            placeholder=f"Todos ({len(opts_subrubro)})",
+        )
+        sel_form = st.multiselect(
+            "📄 Formulario",
+            options=opts_form,
+            key="fil_form",
+            placeholder=f"Todos ({len(opts_form)})",
+        )
+        sel_prov = st.multiselect(
+            "🗺️ Provincia",
+            options=opts_prov,
+            key="fil_prov",
+            placeholder=f"Todas ({len(opts_prov)})",
+        )
+
+    # ── Aplicar filtros ────────────────────────────────────────────────────────────
     df_filtrado = df.copy()
     if sel_empresa:
         df_filtrado = df_filtrado[df_filtrado["empresa"].isin(sel_empresa)]
@@ -426,6 +466,16 @@ def render_gestion_dashboard():
         df_filtrado = df_filtrado[df_filtrado["vendedo"].isin(sel_vendedor)]
     if sel_rubro:
         df_filtrado = df_filtrado[df_filtrado["rubro"].isin(sel_rubro)]
+    if sel_subrubro:
+        df_filtrado = df_filtrado[df_filtrado["subrubro"].isin(sel_subrubro)]
+    if sel_form:
+        df_filtrado = df_filtrado[df_filtrado["formulario"].isin(sel_form)]
+    if sel_prov:
+        df_filtrado = df_filtrado[df_filtrado["provincia"].isin(sel_prov)]
+
+    if df_filtrado.empty:
+        st.info("💭 Los filtros seleccionados no devuelven resultados. Revisá las selecciones.")
+        returndo[df_filtrado["rubro"].isin(sel_rubro)]
     if sel_form:
         df_filtrado = df_filtrado[df_filtrado["formulario"].isin(sel_form)]
     if sel_prov:
