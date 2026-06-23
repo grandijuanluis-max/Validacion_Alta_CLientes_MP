@@ -234,31 +234,56 @@ def render_gestion_dashboard():
     /* Encabezado */
     .gestion-header {
         font-family: 'Inter', sans-serif;
-        font-size: 2rem; font-weight: 800;
-        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 60%, #c084fc 100%);
+        font-size: 2.2rem; font-weight: 800;
+        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 55%, #c084fc 100%);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        margin-bottom: 2px;
+        margin-bottom: 2px; line-height: 1.2;
     }
-    .gestion-sub { color: #94a3b8; font-size: 0.92rem; margin-bottom: 20px; }
+    .gestion-sub { color: #64748b; font-size: 0.9rem; margin-bottom: 18px; }
 
     /* KPIs */
     .kpi-card {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        border: 1px solid #334155; border-radius: 14px;
-        padding: 18px 22px; margin-bottom: 14px;
-        transition: transform 0.2s, border-color 0.2s;
+        background: linear-gradient(145deg, #0f172a, #1e293b);
+        border: 1px solid #1e3a5f; border-radius: 16px;
+        padding: 20px 24px; margin-bottom: 14px;
+        transition: transform 0.2s ease, border-color 0.25s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
     }
-    .kpi-card:hover { transform: translateY(-3px); border-color: #38bdf8; }
-    .kpi-title { color: #94a3b8; font-size: 0.78rem; font-weight: 600;
-                 text-transform: uppercase; letter-spacing: 0.06em; margin: 0; }
-    .kpi-value { color: #f1f5f9; font-size: 1.75rem; font-weight: 700; margin: 6px 0 2px 0; }
-    .kpi-sub   { color: #10b981; font-size: 0.76rem; margin: 0; }
+    .kpi-card:hover { transform: translateY(-4px); border-color: #38bdf8;
+                      box-shadow: 0 8px 24px rgba(56,189,248,0.15); }
+    .kpi-icon  { font-size: 1.4rem; margin-bottom: 4px; }
+    .kpi-title { color: #64748b; font-size: 0.72rem; font-weight: 700;
+                 text-transform: uppercase; letter-spacing: 0.08em; margin: 0; }
+    .kpi-value { color: #f1f5f9; font-size: 1.65rem; font-weight: 700; margin: 4px 0 2px 0;
+                 letter-spacing: -0.02em; }
+    .kpi-sub   { color: #10b981; font-size: 0.72rem; margin: 0; font-weight: 500; }
 
     /* Títulos de sección */
     .section-title {
-        font-family: 'Inter', sans-serif; font-size: 1.1rem; font-weight: 700;
-        color: #e2e8f0; margin: 22px 0 10px 0;
-        border-left: 4px solid #38bdf8; padding-left: 10px;
+        font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700;
+        color: #e2e8f0; margin: 24px 0 12px 0;
+        border-left: 3px solid #38bdf8; padding-left: 12px;
+        letter-spacing: 0.01em;
+    }
+
+    /* Panel config cuadro dinámico */
+    .config-panel {
+        background: linear-gradient(135deg, #0f172a 0%, #131f35 100%);
+        border: 1px solid #1e3a5f; border-radius: 14px;
+        padding: 20px 24px; margin-bottom: 16px;
+    }
+    .dim-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: linear-gradient(135deg, #1d4ed8, #4f46e5);
+        color: #e0f2fe; font-size: 0.8rem; font-weight: 600;
+        padding: 4px 12px; border-radius: 20px; margin: 3px 4px 3px 0;
+        box-shadow: 0 2px 8px rgba(79,70,229,0.3);
+    }
+    .dim-badge {
+        background: rgba(255,255,255,0.15); color: white;
+        border-radius: 50%; width: 18px; height: 18px;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 0.7rem; font-weight: 800;
     }
 
     /* Panel IA */
@@ -270,8 +295,11 @@ def render_gestion_dashboard():
     }
 
     /* Tabla dinámica */
-    .pivot-container { border: 1px solid #1e293b; border-radius: 12px;
-                       overflow: hidden; margin-top: 10px; }
+    .pivot-container {
+        border: 1px solid #1e3a5f; border-radius: 12px;
+        overflow: hidden; margin-top: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -444,72 +472,97 @@ def render_gestion_dashboard():
     #  CONFIGURACIÓN DEL CUADRO DINÁMICO
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown('<p class="section-title">⚙️ Configuración del Cuadro Dinámico</p>', unsafe_allow_html=True)
+    st.markdown('<div class="config-panel">', unsafe_allow_html=True)
 
     label_list = list(DIMENSIONES_DISPONIBLES.values())
     map_label_to_field = {v: k for k, v in DIMENSIONES_DISPONIBLES.items()}
 
-    col_cfg1, col_cfg2, col_cfg3 = st.columns([3, 2, 2])
+    col_cfg1, col_cfg2, col_cfg3 = st.columns([4, 2, 2])
 
     with col_cfg1:
-        st.markdown("**Filas — Agrupación (izq → der)**")
+        st.markdown("##### 📂 Agrupación de Filas *(izq → der)*")
         default_row_labels = [DIMENSIONES_DISPONIBLES[d] for d in DEFAULT_ROW_DIMS if d in DIMENSIONES_DISPONIBLES]
         sel_row_labels = st.multiselect(
-            "Dimensiones de fila", options=label_list,
-            default=default_row_labels, key="pivot_row_dims",
+            "Dimensiones de fila",
+            options=label_list,
+            default=default_row_labels,
+            key="pivot_row_dims",
             label_visibility="collapsed",
+            help="Elegí los campos para agrupar las filas. Se aplican de izquierda a derecha.",
         )
 
     with col_cfg2:
-        st.markdown("**Bandas de Columna** *(opcional)*")
+        st.markdown("##### 📊 Bandas de Columna")
         default_col_labels = [DIMENSIONES_DISPONIBLES[d] for d in DEFAULT_COL_DIMS if d in DIMENSIONES_DISPONIBLES]
         sel_col_labels = st.multiselect(
-            "Bandas de columna", options=["Año", "Mes"],
-            default=default_col_labels, key="pivot_col_dims",
+            "Bandas de columna",
+            options=["Año", "Mes"],
+            default=default_col_labels,
+            key="pivot_col_dims",
             label_visibility="collapsed",
+            help="Activá Año y/o Mes para crear columnas dinámicas de período.",
         )
 
     with col_cfg3:
-        st.markdown("**Métricas**")
+        st.markdown("##### 💹 Métricas")
         sel_metrics_labels = st.multiselect(
-            "Métricas", options=list(METRICAS.values()),
-            default=list(METRICAS.values()), key="pivot_metrics",
+            "Métricas",
+            options=list(METRICAS.values()),
+            default=list(METRICAS.values()),
+            key="pivot_metrics",
             label_visibility="collapsed",
         )
 
-    # Reorden de dimensiones con botones ← →
+    # ── Reorden visual de dimensiones de fila ─────────────────────────────────
     if sel_row_labels:
-        st.markdown("**🔀 Reordenar dimensiones de fila:**")
         current_set = set(sel_row_labels)
         if "pivot_row_order" not in st.session_state or set(st.session_state["pivot_row_order"]) != current_set:
             st.session_state["pivot_row_order"] = list(sel_row_labels)
         ordered = st.session_state["pivot_row_order"]
-        # Sincronizar si el usuario quitó/agregó ítems
         ordered = [x for x in ordered if x in current_set]
         for x in sel_row_labels:
             if x not in ordered:
                 ordered.append(x)
         st.session_state["pivot_row_order"] = ordered
 
-        rc = st.columns(len(ordered))
-        for i, lbl in enumerate(ordered):
-            with rc[i]:
-                c1, c2 = st.columns(2)
-                if i > 0 and c1.button("←", key=f"ml_{i}"):
+        st.markdown("---")
+        st.markdown("**🔀 Orden de agrupación** — Usá los botones para reordenar:")
+
+        # Mostrar chips con número de orden + botones compactos
+        chips_html = "".join(
+            f'<span class="dim-chip"><span class="dim-badge">{i+1}</span> {lbl}</span>'
+            for i, lbl in enumerate(ordered)
+        )
+        st.markdown(chips_html, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Botones de reorden en una sola fila compacta
+        n = len(ordered)
+        btn_cols = st.columns(n * 3 + 1)
+        moved = False
+        for i in range(n):
+            base = i * 3
+            btn_cols[base].markdown(f"<small style='color:#94a3b8'>{ordered[i][:8]}</small>", unsafe_allow_html=True)
+            if i > 0:
+                if btn_cols[base + 1].button("⬅", key=f"ml_{i}", help=f"Mover '{ordered[i]}' a la izquierda"):
                     ordered[i - 1], ordered[i] = ordered[i], ordered[i - 1]
-                    st.session_state["pivot_row_order"] = ordered
-                    st.rerun()
-                if i < len(ordered) - 1 and c2.button("→", key=f"mr_{i}"):
+                    moved = True
+            if i < n - 1:
+                if btn_cols[base + 2].button("➡", key=f"mr_{i}", help=f"Mover '{ordered[i]}' a la derecha"):
                     ordered[i + 1], ordered[i] = ordered[i], ordered[i + 1]
-                    st.session_state["pivot_row_order"] = ordered
-                    st.rerun()
-                st.caption(f"`{i+1}. {lbl}`")
+                    moved = True
+        if moved:
+            st.session_state["pivot_row_order"] = ordered
+            st.rerun()
 
         sel_row_labels = st.session_state["pivot_row_order"]
 
-    row_dims_fields  = [map_label_to_field[l] for l in sel_row_labels if l in map_label_to_field]
-    col_dims_fields  = [map_label_to_field[l] for l in sel_col_labels if l in map_label_to_field]
-    metrics_inv      = {v: k for k, v in METRICAS.items()}
-    metrics_fields   = [metrics_inv[l] for l in sel_metrics_labels if l in metrics_inv]
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    row_dims_fields = [map_label_to_field[l] for l in sel_row_labels if l in map_label_to_field]
+    col_dims_fields = [map_label_to_field[l] for l in sel_col_labels if l in map_label_to_field]
+    metrics_inv     = {v: k for k, v in METRICAS.items()}
+    metrics_fields  = [metrics_inv[l] for l in sel_metrics_labels if l in metrics_inv]
 
     # ══════════════════════════════════════════════════════════════════════════
     #  CUADRO DINÁMICO
@@ -517,7 +570,7 @@ def render_gestion_dashboard():
     st.markdown('<p class="section-title">📋 Cuadro Dinámico de Ventas</p>', unsafe_allow_html=True)
 
     if not row_dims_fields:
-        st.info("Seleccioná al menos una dimensión de fila.")
+        st.info("Seleccioná al menos una dimensión de fila para generar el cuadro.")
     elif not metrics_fields:
         st.info("Seleccioná al menos una métrica.")
     else:
@@ -527,7 +580,7 @@ def render_gestion_dashboard():
             valid_met = [m for m in metrics_fields if m in df_filtrado.columns]
 
             if not valid_row or not valid_met:
-                st.warning("Alguna dimensión o métrica no está disponible en los datos.")
+                st.warning("Alguna dimensión o métrica seleccionada no está disponible en los datos del período.")
             else:
                 try:
                     pt = pd.pivot_table(
@@ -542,7 +595,7 @@ def render_gestion_dashboard():
                         fill_value=0,
                     )
 
-                    # Renombrar columnas
+                    # Renombrar columnas — compatible pandas 1.x y 2.x
                     if isinstance(pt.columns, pd.MultiIndex):
                         new_cols = []
                         for col_tuple in pt.columns:
@@ -554,22 +607,38 @@ def render_gestion_dashboard():
                         pt.columns = [METRICAS.get(c, c) for c in pt.columns]
 
                     # Renombrar índices
-                    pt.index.names = [DIMENSIONES_DISPONIBLES.get(n, n) for n in pt.index.names]
+                    pt.index.names = [DIMENSIONES_DISPONIBLES.get(str(n), str(n)) for n in pt.index.names]
 
-                    # Formatear números argentinos
-                    pt_display = pt.applymap(lambda x: fmt_num_ar(x, 2) if isinstance(x, (int, float, np.number)) else x)
+                    # Formatear números argentinos — compatible pandas 2.x (map en lugar de applymap)
+                    def _fmt_cell(x):
+                        if isinstance(x, (int, float, np.integer, np.floating)) and not isinstance(x, bool):
+                            return fmt_num_ar(x, 2)
+                        return x
+
+                    try:
+                        # pandas >= 2.1
+                        pt_display = pt.map(_fmt_cell)
+                    except AttributeError:
+                        # pandas < 2.1 fallback
+                        pt_display = pt.applymap(_fmt_cell)
 
                     st.markdown('<div class="pivot-container">', unsafe_allow_html=True)
-                    st.dataframe(pt_display, use_container_width=True, height=600)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    st.caption(
-                        f"📊 {cant_registros:,} registros · "
-                        f"{cant_clientes:,} clientes · "
-                        f"{df_filtrado['numero'].nunique():,} comprobantes"
+                    st.dataframe(
+                        pt_display,
+                        use_container_width=True,
+                        height=min(600, max(200, len(pt_display) * 35 + 60)),
                     )
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                    # Barra de info
+                    ic1, ic2, ic3, ic4 = st.columns(4)
+                    ic1.metric("Registros",    f"{cant_registros:,}")
+                    ic2.metric("Clientes",     f"{cant_clientes:,}")
+                    ic3.metric("Comprobantes", f"{df_filtrado['numero'].nunique():,}")
+                    ic4.metric("Filas tabla",  f"{len(pt_display) - 1:,}")
 
                 except Exception as e:
-                    st.error(f"Error generando pivot: {e}")
+                    st.error(f"Error generando el cuadro dinámico: {e}")
                     import traceback
                     st.code(traceback.format_exc())
 
