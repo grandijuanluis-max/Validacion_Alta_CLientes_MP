@@ -475,14 +475,6 @@ def render_gestion_dashboard():
 
     if df_filtrado.empty:
         st.info("💭 Los filtros seleccionados no devuelven resultados. Revisá las selecciones.")
-        returndo[df_filtrado["rubro"].isin(sel_rubro)]
-    if sel_form:
-        df_filtrado = df_filtrado[df_filtrado["formulario"].isin(sel_form)]
-    if sel_prov:
-        df_filtrado = df_filtrado[df_filtrado["provincia"].isin(sel_prov)]
-
-    if df_filtrado.empty:
-        st.info("📭 Los filtros adicionales no devuelven resultados. Revisá las selecciones.")
         return
 
     # ══════════════════════════════════════════════════════════════════════════
