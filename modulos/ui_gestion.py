@@ -4,434 +4,931 @@ import numpy as np
 import datetime
 from modulos.db import supabase
 
-# Importar Gemini para el motor de análisis estratégico
+# ── Gemini ────────────────────────────────────────────────────────────────────
 import google.generativeai as genai
-
-# Intentar configurar Gemini con la API KEY en secrets
 api_key = None
 try:
     api_key = st.secrets.get("GOOGLE_API_KEY", None)
-except:
+except Exception:
     pass
-
 if api_key:
     genai.configure(api_key=api_key)
 
-@st.cache_data(ttl=120)
-def load_sales_data(vendedor_filter=None, limit=5000):
+# ══════════════════════════════════════════════════════════════════════════════
+#  CONSTANTES
+# ══════════════════════════════════════════════════════════════════════════════
+
+DIMENSIONES_DISPONIBLES = {
+    "empresa":    "Empresa",
+    "rubro":      "Rubro",
+    "subrubro":   "Sub Rubro",
+    "grupo":      "Grupo",
+    "vendedo":    "Vendedor",
+    "formulario": "Formulario",
+    "deposito":   "Depósito",
+    "provincia":  "Provincia",
+    "localidad":  "Localidad",
+    "clien":      "Cliente",
+    "cod_clien":  "Cód. Cliente",
+    "producto":   "Producto",
+    "sinonimo":   "Sinónimo",
+    "ean":        "EAN",
+    "_año":       "Año",
+    "_mes":       "Mes",
+}
+
+DEFAULT_ROW_DIMS = ["rubro", "subrubro", "vendedo", "clien", "producto"]
+DEFAULT_COL_DIMS = ["_año", "_mes"]
+METRICAS         = {"impo": "IMPO NETO", "bultos": "BULTOS"}
+
+ATAJOS = [
+    "Mes Actual",
+    "Hoy",
+    "Ayer",
+    "Semana Actual",
+    "Semana Anterior",
+    "Mes Anterior",
+    "Este Año",
+    "Últimos 3 Años",
+    "Últimos 5 Años",
+    "Todo",
+    "Ingresar fecha manualmente",
+]
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CARGA DE DATOS — Paginación completa sin límite artificial
+#  Supabase devuelve como máximo 1.000 registros por request (límite del servidor).
+#  Usamos PAGE = 1000 y un loop que sigue hasta que la página retorna < PAGE filas.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Límite real de Supabase por request (no configurable desde el cliente)
+SUPABASE_PAGE = 1000
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_sales_range(fecha_desde_iso: str, fecha_hasta_iso: str) -> pd.DataFrame:
     """
-    Carga los últimos registros de ventas de Supabase.
+    Carga TODOS los registros de ventas en el rango dado, sin límite de cantidad.
+    Pagina de a 1.000 (máximo de Supabase) hasta agotar todos los registros.
     Retorna un DataFrame limpio y tipado.
     """
     if supabase is None:
         return pd.DataFrame()
-        
     try:
-        # Seleccionamos columnas clave para optimizar ancho de banda y velocidad
-        query = supabase.table("ventas").select(
-            "fecha, empresa, formulario, numero, rubro, subrubro, localidad, provincia, unidades, ean, clien, cod_clien, producto, vendedo, impo"
+        offset = 0
+        frames = []
+        cols = (
+            "fecha, empresa, formulario, numero, rubro, subrubro, grupo, "
+            "localidad, provincia, unidades, ean, clien, cod_clien, producto, "
+            "sinonimo, vendedo, deposito, bultos, impo"
         )
-        
-        if vendedor_filter and vendedor_filter != "Todos":
-            query = query.eq("vendedo", vendedor_filter)
-            
-        res = query.order("fecha", desc=True).limit(limit).execute()
-        
-        if not res.data:
+        while True:
+            res = (
+                supabase.table("ventas")
+                .select(cols)
+                .gte("fecha", fecha_desde_iso)
+                .lte("fecha", fecha_hasta_iso)
+                .range(offset, offset + SUPABASE_PAGE - 1)
+                .execute()
+            )
+            if not res.data:
+                break
+            frames.append(pd.DataFrame(res.data))
+            # Si la respuesta tiene menos filas que el límite, es la última página
+            if len(res.data) < SUPABASE_PAGE:
+                break
+            offset += SUPABASE_PAGE
+
+        if not frames:
             return pd.DataFrame()
-            
-        df = pd.DataFrame(res.data)
-        
-        # Tipar columnas correctamente
-        df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
-        df['impo'] = pd.to_numeric(df['impo'], errors='coerce').fillna(0.0)
-        df['unidades'] = pd.to_numeric(df['unidades'], errors='coerce').fillna(0)
-        df['cod_clien'] = pd.to_numeric(df['cod_clien'], errors='coerce').fillna(0).astype(int)
-        
+
+        df = pd.concat(frames, ignore_index=True)
+        _typecast(df)
         return df
+
     except Exception as e:
-        st.error(f"Error al cargar datos de ventas: {e}")
+        st.error(f"Error cargando ventas: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
-def get_vendedores_list():
-    """Obtiene la lista única de vendedores con ventas registradas."""
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_sales_full_for_ia() -> pd.DataFrame:
+    """Carga TODA la tabla ventas para el contexto del Gemini Brain (sin filtros de UI)."""
     if supabase is None:
-        return ["Todos"]
+        return pd.DataFrame()
     try:
-        res = supabase.table("ventas").select("vendedo").execute()
-        if not res.data:
-            return ["Todos"]
-        df_v = pd.DataFrame(res.data)
-        vendedores = df_v["vendedo"].dropna().unique().tolist()
-        vendedores = [v for v in vendedores if v.strip()]
-        return ["Todos"] + sorted(vendedores)
+        offset = 0
+        frames = []
+        cols = "fecha, rubro, vendedo, provincia, formulario, bultos, impo, cod_clien"
+        while True:
+            res = (
+                supabase.table("ventas")
+                .select(cols)
+                .range(offset, offset + SUPABASE_PAGE - 1)
+                .execute()
+            )
+            if not res.data:
+                break
+            frames.append(pd.DataFrame(res.data))
+            if len(res.data) < SUPABASE_PAGE:
+                break
+            offset += SUPABASE_PAGE
+
+        if not frames:
+            return pd.DataFrame()
+
+        df = pd.concat(frames, ignore_index=True)
+        df["fecha"]     = pd.to_datetime(df["fecha"], errors="coerce")
+        df["impo"]      = pd.to_numeric(df["impo"],   errors="coerce").fillna(0.0)
+        df["bultos"]    = pd.to_numeric(df["bultos"], errors="coerce").fillna(0.0)
+        df["cod_clien"] = pd.to_numeric(df["cod_clien"], errors="coerce").fillna(0).astype(int)
+        df["_año"] = df["fecha"].dt.year.astype("Int64").astype(str)
+        df["_mes"]  = df["fecha"].dt.month.astype("Int64").astype(str).str.zfill(2)
+        return df
     except Exception as e:
-        return ["Todos"]
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_total_count() -> int:
+    """Cuenta el total de registros en la tabla ventas."""
+    if supabase is None:
+        return 0
+    try:
+        res = supabase.table("ventas").select("id", count="exact").execute()
+        return res.count or 0
+    except Exception:
+        return 0
+
+
+def _typecast(df: pd.DataFrame):
+    """Convierte tipos en el DataFrame in-place."""
+    df["fecha"]     = pd.to_datetime(df["fecha"],    errors="coerce")
+    df["impo"]      = pd.to_numeric(df["impo"],      errors="coerce").fillna(0.0)
+    df["bultos"]    = pd.to_numeric(df["bultos"],    errors="coerce").fillna(0.0)
+    df["unidades"]  = pd.to_numeric(df["unidades"],  errors="coerce").fillna(0.0)
+    df["cod_clien"] = pd.to_numeric(df["cod_clien"], errors="coerce").fillna(0).astype(int)
+    df["_año"] = df["fecha"].dt.year.astype("Int64").astype(str)
+    df["_mes"] = df["fecha"].dt.month.astype("Int64").astype(str).str.zfill(2)
+    str_cols = ["empresa", "rubro", "subrubro", "grupo", "vendedo", "formulario",
+                "deposito", "provincia", "localidad", "clien", "producto", "sinonimo", "ean"]
+    for c in str_cols:
+        if c in df.columns:
+            df[c] = df[c].fillna("").str.strip().replace("", "(Vacío)")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FECHAS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def date_range_for_shortcut(shortcut: str):
+    hoy = datetime.date.today()
+    if shortcut == "Hoy":
+        return hoy, hoy
+    elif shortcut == "Ayer":
+        a = hoy - datetime.timedelta(days=1)
+        return a, a
+    elif shortcut == "Semana Actual":
+        return hoy - datetime.timedelta(days=hoy.weekday()), hoy
+    elif shortcut == "Semana Anterior":
+        la = hoy - datetime.timedelta(days=hoy.weekday() + 7)
+        return la, la + datetime.timedelta(days=6)
+    elif shortcut == "Mes Actual":
+        return hoy.replace(day=1), hoy
+    elif shortcut == "Mes Anterior":
+        fin = hoy.replace(day=1) - datetime.timedelta(days=1)
+        return fin.replace(day=1), fin
+    elif shortcut == "Este Año":
+        return hoy.replace(month=1, day=1), hoy
+    elif shortcut == "Últimos 3 Años":
+        return hoy.replace(year=hoy.year - 3, month=1, day=1), hoy
+    elif shortcut == "Últimos 5 Años":
+        return hoy.replace(year=hoy.year - 5, month=1, day=1), hoy
+    elif shortcut == "Todo":
+        return datetime.date(2000, 1, 1), hoy
+    else:
+        return hoy.replace(month=1, day=1), hoy
+
+
+def fmt_ar(d) -> str:
+    if d is None:
+        return ""
+    return d.strftime("%d/%m/%Y")
+
+
+def fmt_num_ar(val, decimals=2) -> str:
+    if pd.isna(val) or val == 0:
+        return "-"
+    try:
+        s = f"{val:,.{decimals}f}"
+        return s.replace(",", "MILLES").replace(".", ",").replace("MILLES", ".")
+    except Exception:
+        return str(val)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RENDER PRINCIPAL
+# ══════════════════════════════════════════════════════════════════════════════
 
 def render_gestion_dashboard():
-    # --- Estilos CSS Premium ---
+
+    # ── CSS Premium — NO pisa el sidebar de Streamlit ─────────────────────────
     st.markdown("""
     <style>
-    /* Estilos del Dashboard */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    /* Encabezado */
     .gestion-header {
-        font-size: 2rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 5px;
+        font-family: 'Inter', sans-serif;
+        font-size: 2.2rem; font-weight: 800;
+        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 55%, #c084fc 100%);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        margin-bottom: 2px; line-height: 1.2;
     }
+    .gestion-sub { color: #64748b; font-size: 0.9rem; margin-bottom: 18px; }
+
+    /* KPIs */
     .kpi-card {
-        background-color: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        transition: transform 0.2s ease, border-color 0.2s ease;
-        margin-bottom: 15px;
+        background: linear-gradient(145deg, #0f172a, #1e293b);
+        border: 1px solid #1e3a5f; border-radius: 16px;
+        padding: 20px 24px; margin-bottom: 14px;
+        transition: transform 0.2s ease, border-color 0.25s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
     }
-    .kpi-card:hover {
-        transform: translateY(-3px);
-        border-color: #3b82f6;
+    .kpi-card:hover { transform: translateY(-4px); border-color: #38bdf8;
+                      box-shadow: 0 8px 24px rgba(56,189,248,0.15); }
+    .kpi-icon  { font-size: 1.4rem; margin-bottom: 4px; }
+    .kpi-title { color: #64748b; font-size: 0.72rem; font-weight: 700;
+                 text-transform: uppercase; letter-spacing: 0.08em; margin: 0; }
+    .kpi-value { color: #f1f5f9; font-size: 1.65rem; font-weight: 700; margin: 4px 0 2px 0;
+                 letter-spacing: -0.02em; }
+    .kpi-sub   { color: #10b981; font-size: 0.72rem; margin: 0; font-weight: 500; }
+
+    /* Títulos de sección */
+    .section-title {
+        font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700;
+        color: #e2e8f0; margin: 24px 0 12px 0;
+        border-left: 3px solid #38bdf8; padding-left: 12px;
+        letter-spacing: 0.01em;
     }
-    .kpi-title {
-        color: #9ca3af;
-        font-size: 0.85rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin: 0;
+
+    /* Panel config cuadro dinámico */
+    .config-panel {
+        background: linear-gradient(135deg, #0f172a 0%, #131f35 100%);
+        border: 1px solid #1e3a5f; border-radius: 14px;
+        padding: 20px 24px; margin-bottom: 16px;
     }
-    .kpi-value {
-        color: #f3f4f6;
-        font-size: 1.85rem;
-        font-weight: 700;
-        margin-top: 8px;
-        margin-bottom: 0;
+    .dim-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: linear-gradient(135deg, #1d4ed8, #4f46e5);
+        color: #e0f2fe; font-size: 0.8rem; font-weight: 600;
+        padding: 4px 12px; border-radius: 20px; margin: 3px 4px 3px 0;
+        box-shadow: 0 2px 8px rgba(79,70,229,0.3);
     }
-    .kpi-subtitle {
-        color: #10b981;
-        font-size: 0.75rem;
-        margin-top: 5px;
-        margin-bottom: 0;
+    .dim-badge {
+        background: rgba(255,255,255,0.15); color: white;
+        border-radius: 50%; width: 18px; height: 18px;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 0.7rem; font-weight: 800;
     }
-    /* Estilo del Panel de IA */
+
+    /* Panel IA */
     .ia-panel {
         background: radial-gradient(circle at top left, #1e1b4b 0%, #0f172a 100%);
-        border: 1px solid #312e81;
-        border-radius: 16px;
-        padding: 25px;
-        margin-top: 25px;
-        margin-bottom: 25px;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+        border: 1px solid #3730a3; border-radius: 18px;
+        padding: 28px; margin-top: 28px;
+        box-shadow: 0 12px 40px rgba(79,70,229,0.15);
+    }
+
+    /* Tabla dinámica */
+    .pivot-container {
+        border: 1px solid #1e3a5f; border-radius: 12px;
+        overflow: hidden; margin-top: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
     }
     </style>
     """, unsafe_allow_html=True)
 
+    # ── Encabezado ─────────────────────────────────────────────────────────────
     st.markdown('<h1 class="gestion-header">📊 Análisis de Gestión</h1>', unsafe_allow_html=True)
-    st.write("Panel inteligente de monitoreo de facturación, volumen y analítica estratégica de ventas.")
-    
+    st.markdown('<p class="gestion-sub">Cuadro dinámico de ventas · Motor IA · Filtros ágiles</p>', unsafe_allow_html=True)
+
     if supabase is None:
-        st.error("No hay conexión a la base de datos configurada.")
+        st.error("⚠️ Sin conexión a la base de datos.")
         return
 
-    # --- FILTROS DE BÚSQUEDA ---
-    st.sidebar.markdown("### 🔍 Filtros de Gestión")
-    
-    # Obtener lista de vendedores dinámicamente
-    vendedores = get_vendedores_list()
-    selected_vendedor = st.sidebar.selectbox("Vendedor", vendedores)
-    
-    # Rango de fechas
-    today = datetime.date.today()
-    start_default = today - datetime.timedelta(days=90)
-    date_range = st.sidebar.date_input("Rango de Fechas", [start_default, today])
-    
-    limit_records = st.sidebar.slider("Límite de registros a consultar", 500, 10000, 5000, step=500)
-    
-    # Carga de Datos
-    with st.spinner("Cargando datos de facturación..."):
-        df_raw = load_sales_data(vendedor_filter=selected_vendedor, limit=limit_records)
-        
-    if df_raw.empty:
-        st.warning("⚠️ No se encontraron registros de ventas que coincidan con los filtros seleccionados o la tabla está vacía.")
-        st.info("Asegúrate de que el sincronizador local en Windows haya procesado y subido el archivo `ventas.csv` a Supabase.")
+    total_bd = get_total_count()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  SIDEBAR BLOQUE 1 — Solo el selector de período
+    #  (Los filtros adicionales van en BLOQUE 2, DESPUÉS de cargar los datos)
+    # ══════════════════════════════════════════════════════════════════════════
+    with st.sidebar:
+        st.markdown("### 🔍 Filtros de Gestión")
+        st.caption(f"Base total: {total_bd:,} registros")
+        st.markdown("---")
+
+        # ── Selector de período ──────────────────────────────────────────────────
+        st.markdown("**📅 Período**")
+
+        if "fecha_atajo" not in st.session_state:
+            st.session_state["fecha_atajo"] = "Mes Actual"
+        if "fecha_desde" not in st.session_state or "fecha_hasta" not in st.session_state:
+            d0, d1 = date_range_for_shortcut("Mes Actual")
+            st.session_state["fecha_desde"] = d0
+            st.session_state["fecha_hasta"] = d1
+
+        try:
+            idx_actual = ATAJOS.index(st.session_state["fecha_atajo"])
+        except ValueError:
+            idx_actual = 0
+
+        sel_atajo = st.selectbox(
+            "Período",
+            options=ATAJOS,
+            index=idx_actual,
+            key="sel_atajo_periodo",
+            label_visibility="collapsed",
+        )
+
+        if sel_atajo != "Ingresar fecha manualmente":
+            if sel_atajo != st.session_state.get("fecha_atajo"):
+                d0, d1 = date_range_for_shortcut(sel_atajo)
+                st.session_state["fecha_desde"] = d0
+                st.session_state["fecha_hasta"] = d1
+            st.session_state["fecha_atajo"] = sel_atajo
+            fecha_desde = st.session_state["fecha_desde"]
+            fecha_hasta = st.session_state["fecha_hasta"]
+            st.caption(f"📆 {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
+        else:
+            st.session_state["fecha_atajo"] = "Ingresar fecha manualmente"
+            st.markdown("*Seleccioná las fechas:*")
+            fecha_desde = st.date_input(
+                "Desde",
+                value=st.session_state.get("fecha_desde", datetime.date.today().replace(day=1)),
+                key="cal_fecha_desde",
+                format="DD/MM/YYYY",
+            )
+            fecha_hasta = st.date_input(
+                "Hasta",
+                value=st.session_state.get("fecha_hasta", datetime.date.today()),
+                key="cal_fecha_hasta",
+                format="DD/MM/YYYY",
+            )
+            st.session_state["fecha_desde"] = fecha_desde
+            st.session_state["fecha_hasta"] = fecha_hasta
+            if fecha_desde > fecha_hasta:
+                st.warning("⚠️ La fecha desde es posterior a la fecha hasta.")
+
+        st.markdown("---")
+        st.caption("⏳ Cargando datos del período...")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  CARGA DE DATOS SEGÚN PERÍODO SELECCIONADO
+    # ══════════════════════════════════════════════════════════════════════════
+    fecha_desde_iso = fecha_desde.strftime("%Y-%m-%d")
+    fecha_hasta_iso = fecha_hasta.strftime("%Y-%m-%d")
+
+    with st.spinner(f"⏳ Cargando ventas {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}..."):
+        df = load_sales_range(fecha_desde_iso, fecha_hasta_iso)
+
+    if df.empty:
+        st.warning("💭 No hay ventas en el período seleccionado.")
+        col_info1, col_info2 = st.columns(2)
+        with col_info1:
+            st.info(f"**Período:** {fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
+        with col_info2:
+            st.info(f"**Total en base de datos:** {total_bd:,} registros")
+        _render_uploader()
         return
-        
-    # Filtrar por rango de fechas en memoria
-    df_filtered = df_raw.copy()
-    if isinstance(date_range, list) or isinstance(date_range, tuple):
-        if len(date_range) == 2:
-            start_date, end_date = date_range
-            df_filtered = df_filtered[
-                (df_filtered['fecha'].dt.date >= start_date) & 
-                (df_filtered['fecha'].dt.date <= end_date)
-            ]
-            
-    if df_filtered.empty:
-        st.info("No hay ventas en el rango de fechas seleccionado.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  SIDEBAR BLOQUE 2 — Filtros con opciones reales (se carga después de df)
+    # ══════════════════════════════════════════════════════════════════════════
+    def _opts(col_name):
+        """Valores únicos ordenados, sin vacíos."""
+        if col_name not in df.columns:
+            return []
+        return sorted(
+            str(v) for v in df[col_name].dropna().unique()
+            if str(v).strip() != "" and str(v) != "(Vacío)"
+        )
+
+    opts_empresa  = _opts("empresa")
+    opts_vendedor = _opts("vendedo")
+    opts_rubro    = _opts("rubro")
+    opts_subrubro = _opts("subrubro")
+    opts_form     = _opts("formulario")
+    opts_prov     = _opts("provincia")
+
+    with st.sidebar:
+        st.markdown("**🗳️ Filtros adicionales**")
+        st.caption(f"{len(df):,} registros cargados del período")
+
+        sel_empresa = st.multiselect(
+            "🏢 Empresa",
+            options=opts_empresa,
+            key="fil_empresa",
+            placeholder=f"Todas ({len(opts_empresa)})",
+        )
+        sel_vendedor = st.multiselect(
+            "👤 Vendedor",
+            options=opts_vendedor,
+            key="fil_vendedor",
+            placeholder=f"Todos ({len(opts_vendedor)})",
+        )
+        sel_rubro = st.multiselect(
+            "📦 Rubro",
+            options=opts_rubro,
+            key="fil_rubro",
+            placeholder=f"Todos ({len(opts_rubro)})",
+        )
+        sel_subrubro = st.multiselect(
+            "📂 Sub Rubro",
+            options=opts_subrubro,
+            key="fil_subrubro",
+            placeholder=f"Todos ({len(opts_subrubro)})",
+        )
+        sel_form = st.multiselect(
+            "📄 Formulario",
+            options=opts_form,
+            key="fil_form",
+            placeholder=f"Todos ({len(opts_form)})",
+        )
+        sel_prov = st.multiselect(
+            "🗺️ Provincia",
+            options=opts_prov,
+            key="fil_prov",
+            placeholder=f"Todas ({len(opts_prov)})",
+        )
+
+    # ── Aplicar filtros ────────────────────────────────────────────────────────────
+    df_filtrado = df.copy()
+    if sel_empresa:
+        df_filtrado = df_filtrado[df_filtrado["empresa"].isin(sel_empresa)]
+    if sel_vendedor:
+        df_filtrado = df_filtrado[df_filtrado["vendedo"].isin(sel_vendedor)]
+    if sel_rubro:
+        df_filtrado = df_filtrado[df_filtrado["rubro"].isin(sel_rubro)]
+    if sel_subrubro:
+        df_filtrado = df_filtrado[df_filtrado["subrubro"].isin(sel_subrubro)]
+    if sel_form:
+        df_filtrado = df_filtrado[df_filtrado["formulario"].isin(sel_form)]
+    if sel_prov:
+        df_filtrado = df_filtrado[df_filtrado["provincia"].isin(sel_prov)]
+
+    if df_filtrado.empty:
+        st.info("💭 Los filtros seleccionados no devuelven resultados. Revisá las selecciones.")
         return
 
-    # --- MÉTRICAS KPI ---
-    total_facturado = df_filtered['impo'].sum()
-    total_unidades = df_filtered['unidades'].sum()
-    cant_transacciones = len(df_filtered)
-    ticket_promedio = total_facturado / cant_transacciones if cant_transacciones > 0 else 0
-    
-    # Render layout with just the Uploader and Gemini Brain
+    # ══════════════════════════════════════════════════════════════════════════
+    #  KPIs
+    # ══════════════════════════════════════════════════════════════════════════
+    total_impo     = df_filtrado["impo"].sum()
+    total_bultos   = df_filtrado["bultos"].sum()
+    total_unidades = df_filtrado["unidades"].sum() if "unidades" in df_filtrado.columns else 0
+    cant_clientes  = df_filtrado["cod_clien"].nunique()
+    cant_registros = len(df_filtrado)
 
+    k1, k2, k3, k4, k5 = st.columns(5)
 
-    # --- PANEL DE SUBIDA HISTÓRICA ---
-    with st.expander("📤 Carga Histórica de Ventas (ventas.dbi)"):
-        st.write("Sube un archivo `ventas.dbi` histórico para procesarlo e importarlo incrementalmente en la base de datos de Supabase. El sistema evitará duplicados de forma inteligente utilizando las restricciones de base de datos.")
-        uploaded_file = st.file_uploader("Selecciona el archivo ventas.dbi", type=["dbi"], key="uploader_ventas_history")
-        
-        if uploaded_file is not None:
-            if st.button("🚀 Iniciar Procesamiento e Importación", use_container_width=True, key="btn_ventas_history_import"):
-                import os
-                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_path = os.path.join(temp_dir, "temp_ventas_history.dbi")
-                
-                with open(temp_path, "wb") as f_temp:
-                    f_temp.write(uploaded_file.getbuffer())
-                
+    def _kpi(col, title, value, sub=""):
+        col.markdown(f"""
+        <div class="kpi-card">
+            <p class="kpi-title">{title}</p>
+            <p class="kpi-value">{value}</p>
+            <p class="kpi-sub">{sub}</p>
+        </div>""", unsafe_allow_html=True)
+
+    _kpi(k1, "💰 Impo Neto",    f"$ {fmt_num_ar(total_impo, 2)}",  f"{fmt_ar(fecha_desde)} → {fmt_ar(fecha_hasta)}")
+    _kpi(k2, "📦 Bultos",       fmt_num_ar(total_bultos, 2),        f"{cant_registros:,} ítems")
+    _kpi(k3, "🔢 Unidades",     fmt_num_ar(total_unidades, 0),      "Unidades despachadas")
+    _kpi(k4, "🤝 Clientes",     f"{cant_clientes:,}",               "Clientes únicos")
+    _kpi(k5, "📋 Comprobantes", f"{df_filtrado['numero'].nunique():,}", "Números únicos")
+
+    # Info de disponibilidad de filtros adicionales
+    with st.expander("ℹ️ Valores disponibles para filtros adicionales en este período"):
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5)
+        def _list_vals(col, label, series):
+            vals = sorted(series.dropna().unique().tolist())
+            col.markdown(f"**{label}** ({len(vals)})")
+            col.caption(" · ".join(str(v) for v in vals[:20]) + ("..." if len(vals) > 20 else ""))
+        _list_vals(fc1, "Empresas",    df_filtrado["empresa"])
+        _list_vals(fc2, "Vendedores",  df_filtrado["vendedo"])
+        _list_vals(fc3, "Rubros",      df_filtrado["rubro"])
+        _list_vals(fc4, "Formularios", df_filtrado["formulario"])
+        _list_vals(fc5, "Provincias",  df_filtrado["provincia"])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  CONFIGURACIÓN DEL CUADRO DINÁMICO
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<p class="section-title">⚙️ Configuración del Cuadro Dinámico</p>', unsafe_allow_html=True)
+    st.markdown('<div class="config-panel">', unsafe_allow_html=True)
+
+    label_list = list(DIMENSIONES_DISPONIBLES.values())
+    map_label_to_field = {v: k for k, v in DIMENSIONES_DISPONIBLES.items()}
+
+    col_cfg1, col_cfg2, col_cfg3 = st.columns([4, 2, 2])
+
+    with col_cfg1:
+        st.markdown("##### 📂 Agrupación de Filas *(izq → der)*")
+        default_row_labels = [DIMENSIONES_DISPONIBLES[d] for d in DEFAULT_ROW_DIMS if d in DIMENSIONES_DISPONIBLES]
+        sel_row_labels = st.multiselect(
+            "Dimensiones de fila",
+            options=label_list,
+            default=default_row_labels,
+            key="pivot_row_dims",
+            label_visibility="collapsed",
+            help="Elegí los campos para agrupar las filas. Se aplican de izquierda a derecha.",
+        )
+
+    with col_cfg2:
+        st.markdown("##### 📊 Bandas de Columna")
+        default_col_labels = [DIMENSIONES_DISPONIBLES[d] for d in DEFAULT_COL_DIMS if d in DIMENSIONES_DISPONIBLES]
+        sel_col_labels = st.multiselect(
+            "Bandas de columna",
+            options=["Año", "Mes"],
+            default=default_col_labels,
+            key="pivot_col_dims",
+            label_visibility="collapsed",
+            help="Activá Año y/o Mes para crear columnas dinámicas de período.",
+        )
+
+    with col_cfg3:
+        st.markdown("##### 💹 Métricas")
+        sel_metrics_labels = st.multiselect(
+            "Métricas",
+            options=list(METRICAS.values()),
+            default=list(METRICAS.values()),
+            key="pivot_metrics",
+            label_visibility="collapsed",
+        )
+
+    # ── Reorden visual de dimensiones de fila ─────────────────────────────────
+    if sel_row_labels:
+        current_set = set(sel_row_labels)
+        if "pivot_row_order" not in st.session_state or set(st.session_state["pivot_row_order"]) != current_set:
+            st.session_state["pivot_row_order"] = list(sel_row_labels)
+        ordered = st.session_state["pivot_row_order"]
+        ordered = [x for x in ordered if x in current_set]
+        for x in sel_row_labels:
+            if x not in ordered:
+                ordered.append(x)
+        st.session_state["pivot_row_order"] = ordered
+
+        st.markdown("---")
+        st.markdown("**🔀 Orden de agrupación** — Usá los botones para reordenar:")
+
+        # Mostrar chips con número de orden + botones compactos
+        chips_html = "".join(
+            f'<span class="dim-chip"><span class="dim-badge">{i+1}</span> {lbl}</span>'
+            for i, lbl in enumerate(ordered)
+        )
+        st.markdown(chips_html, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Botones de reorden en una sola fila compacta
+        n = len(ordered)
+        btn_cols = st.columns(n * 3 + 1)
+        moved = False
+        for i in range(n):
+            base = i * 3
+            btn_cols[base].markdown(f"<small style='color:#94a3b8'>{ordered[i][:8]}</small>", unsafe_allow_html=True)
+            if i > 0:
+                if btn_cols[base + 1].button("⬅", key=f"ml_{i}", help=f"Mover '{ordered[i]}' a la izquierda"):
+                    ordered[i - 1], ordered[i] = ordered[i], ordered[i - 1]
+                    moved = True
+            if i < n - 1:
+                if btn_cols[base + 2].button("➡", key=f"mr_{i}", help=f"Mover '{ordered[i]}' a la derecha"):
+                    ordered[i + 1], ordered[i] = ordered[i], ordered[i + 1]
+                    moved = True
+        if moved:
+            st.session_state["pivot_row_order"] = ordered
+            st.rerun()
+
+        sel_row_labels = st.session_state["pivot_row_order"]
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    row_dims_fields = [map_label_to_field[l] for l in sel_row_labels if l in map_label_to_field]
+    col_dims_fields = [map_label_to_field[l] for l in sel_col_labels if l in map_label_to_field]
+    metrics_inv     = {v: k for k, v in METRICAS.items()}
+    metrics_fields  = [metrics_inv[l] for l in sel_metrics_labels if l in metrics_inv]
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  CUADRO DINÁMICO
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<p class="section-title">📋 Cuadro Dinámico de Ventas</p>', unsafe_allow_html=True)
+
+    if not row_dims_fields:
+        st.info("Seleccioná al menos una dimensión de fila para generar el cuadro.")
+    elif not metrics_fields:
+        st.info("Seleccioná al menos una métrica.")
+    else:
+        with st.spinner("Construyendo cuadro dinámico..."):
+            valid_row = [r for r in row_dims_fields if r in df_filtrado.columns]
+            valid_col = [c for c in col_dims_fields if c in df_filtrado.columns]
+            valid_met = [m for m in metrics_fields if m in df_filtrado.columns]
+
+            if not valid_row or not valid_met:
+                st.warning("Alguna dimensión o métrica seleccionada no está disponible en los datos del período.")
+            else:
                 try:
-                    import dbf
-                    
-                    def parse_dbf_int(val):
-                        if val is None: return 0
-                        try: return int(val)
-                        except: return 0
-                        
-                    def parse_dbf_float(val):
-                        if val is None: return 0.0
-                        try: return float(val)
-                        except: return 0.0
+                    pt = pd.pivot_table(
+                        df_filtrado,
+                        index=valid_row,
+                        columns=valid_col if valid_col else None,
+                        values=valid_met,
+                        aggfunc="sum",
+                        margins=True,
+                        margins_name="▌ TOTAL",
+                        observed=True,
+                        fill_value=0,
+                    )
 
-                    def parse_dbf_str(val):
-                        if val is None: return ""
-                        try: return str(val).strip()
-                        except: return ""
-                        
-                    def parse_dbf_date(val):
-                        if not val: return None
-                        if isinstance(val, (datetime.date, datetime.datetime)):
-                            return val.strftime("%Y-%m-%d")
-                        val_str = str(val).strip()
-                        if len(val_str) >= 10 and val_str[4] == '-' and val_str[7] == '-':
-                            return val_str[:10]
-                        try:
-                            parts = val_str.split('/')
-                            if len(parts) == 3:
-                                d, m, y = parts
-                                return f"{y.zfill(4)}-{m.zfill(2)}-{d.zfill(2)}"
-                        except: pass
-                        return None
-                    
-                    # Crear archivos de memo ficticios si no existen para evitar que explote si no se subieron
-                    def create_dummy_memo_files(dbf_path):
-                        base, _ = os.path.splitext(dbf_path)
-                        for ext in [".dbt", ".fpt", ".DBT", ".FPT"]:
-                            p = base + ext
-                            if not os.path.exists(p):
-                                try:
-                                    with open(p, "wb") as f:
-                                        if ext.lower() == ".dbt":
-                                            f.write(b'\x01\x00\x00\x00' + b'\x00' * 508)
-                                        else:
-                                            f.write(b'\x00\x00\x00\x01\x00\x00\x00\x40' + b'\x00' * 504)
-                                except:
-                                    pass
+                    # Renombrar columnas — compatible pandas 1.x y 2.x
+                    if isinstance(pt.columns, pd.MultiIndex):
+                        new_cols = []
+                        for col_tuple in pt.columns:
+                            m_label = METRICAS.get(col_tuple[0], col_tuple[0])
+                            rest = " | ".join(str(x) for x in col_tuple[1:])
+                            new_cols.append(f"{rest} | {m_label}" if rest else m_label)
+                        pt.columns = new_cols
+                    else:
+                        pt.columns = [METRICAS.get(c, c) for c in pt.columns]
 
-                    create_dummy_memo_files(temp_path)
+                    # Renombrar índices
+                    pt.index.names = [DIMENSIONES_DISPONIBLES.get(str(n), str(n)) for n in pt.index.names]
 
-                    # Leer cantidad total de registros
-                    total_records = 0
-                    with dbf.Table(temp_path, codepage='cp1252') as table:
-                        table.open()
-                        if table._meta.memo:
-                            original_get_memo = table._meta.memo.get_memo
-                            def safe_get_memo(block):
-                                try:
-                                    return original_get_memo(block)
-                                except Exception:
-                                    return b""
-                            table._meta.memo.get_memo = safe_get_memo
-                        total_records = len(table)
-                    
-                    st.info(f"Detectados {total_records} registros en el archivo dbi. Iniciando importación...")
+                    # Formatear números argentinos — compatible pandas 2.x (map en lugar de applymap)
+                    def _fmt_cell(x):
+                        if isinstance(x, (int, float, np.integer, np.floating)) and not isinstance(x, bool):
+                            return fmt_num_ar(x, 2)
+                        return x
+
+                    try:
+                        # pandas >= 2.1
+                        pt_display = pt.map(_fmt_cell)
+                    except AttributeError:
+                        # pandas < 2.1 fallback
+                        pt_display = pt.applymap(_fmt_cell)
+
+                    st.markdown('<div class="pivot-container">', unsafe_allow_html=True)
+                    st.dataframe(
+                        pt_display,
+                        use_container_width=True,
+                        height=min(600, max(200, len(pt_display) * 35 + 60)),
+                    )
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                    # Barra de info
+                    ic1, ic2, ic3, ic4 = st.columns(4)
+                    ic1.metric("Registros",    f"{cant_registros:,}")
+                    ic2.metric("Clientes",     f"{cant_clientes:,}")
+                    ic3.metric("Comprobantes", f"{df_filtrado['numero'].nunique():,}")
+                    ic4.metric("Filas tabla",  f"{len(pt_display) - 1:,}")
+
+                except Exception as e:
+                    st.error(f"Error generando el cuadro dinámico: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  CARGA HISTÓRICA
+    # ══════════════════════════════════════════════════════════════════════════
+    _render_uploader()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  GEMINI BRAIN
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown('<div class="ia-panel">', unsafe_allow_html=True)
+    st.markdown(
+        "<h2 style='color:#a5b4fc; margin-top:0; font-family:Inter,sans-serif;'>"
+        "🧠 Gemini Brain — Consultor Estratégico de Ventas</h2>",
+        unsafe_allow_html=True,
+    )
+    st.write(
+        "El motor de IA analiza **toda la tabla de ventas** (independientemente de los filtros activos) "
+        "y responde consultas estratégicas con datos reales."
+    )
+
+    if not api_key:
+        st.info("🔑 Configurá `GOOGLE_API_KEY` en `secrets.toml` para habilitar el Gemini Brain.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    # Contexto de TODA la tabla (independiente de filtros UI)
+    with st.spinner("Preparando contexto histórico completo para el Brain..."):
+        df_ia = load_sales_full_for_ia()
+
+    if df_ia.empty:
+        st.warning("No se pudo cargar el contexto histórico.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _build_ctx(n_rows: int) -> str:
+        ctx = df_ia.groupby(
+            ["_año", "_mes", "vendedo", "rubro", "provincia", "formulario"],
+            observed=True,
+        ).agg(
+            impo_neto=("impo", "sum"),
+            bultos=("bultos", "sum"),
+            cant_items=("impo", "count"),
+            clientes=("cod_clien", "nunique"),
+        ).reset_index().sort_values("impo_neto", ascending=False).head(200)
+        return ctx.to_string(index=False)
+
+    context_str = _build_ctx(len(df_ia))
+
+    kpi_g = {
+        "impo_total":   df_ia["impo"].sum(),
+        "bultos_total": df_ia["bultos"].sum(),
+        "clientes":     df_ia["cod_clien"].nunique(),
+        "registros":    len(df_ia),
+        "fecha_min":    df_ia["fecha"].min().strftime("%d/%m/%Y") if not df_ia.empty else "N/A",
+        "fecha_max":    df_ia["fecha"].max().strftime("%d/%m/%Y") if not df_ia.empty else "N/A",
+    }
+
+    ia1, ia2, ia3, ia4 = st.columns(4)
+    prompt_ia = None
+    if ia1.button("📊 Informe Ejecutivo",      use_container_width=True, key="ia_btn1"):
+        prompt_ia = "Generá un informe ejecutivo de alto nivel resumiendo el comportamiento comercial histórico: vendedores líderes, rubros principales, evolución por año y sugerencias estratégicas."
+    if ia2.button("🚨 Alertas de Desvíos",     use_container_width=True, key="ia_btn2"):
+        prompt_ia = "Detectá alertas comerciales: ¿hay excesiva dependencia en algún vendedor, rubro o provincia? ¿Hay períodos de caída marcada? ¿Concentración de clientes?"
+    if ia3.button("💡 Plan Comercial",         use_container_width=True, key="ia_btn3"):
+        prompt_ia = "Proponé 3 iniciativas comerciales concretas para expandir la facturación basándote en la distribución actual de ventas por región, rubro y vendedor."
+    if ia4.button("📈 Tendencias y Estación.", use_container_width=True, key="ia_btn4"):
+        prompt_ia = "Analizá las tendencias de crecimiento o decrecimiento mensual/anual. ¿Qué meses son los pico? ¿Hay estacionalidad marcada? ¿Qué año fue el mejor?"
+
+    pregunta_libre = st.text_input(
+        "💬 Hacé una consulta personalizada sobre toda la base de ventas:",
+        placeholder="Ej: ¿Qué vendedor tuvo mejor performance en 2025? ¿Cuál fue el mes con más bultos?",
+        key="ia_pregunta_libre",
+    )
+    prompt_final = prompt_ia if prompt_ia else pregunta_libre
+
+    if prompt_final:
+        prompt_completo = f"""
+ERES EL CONSULTOR ESTRATÉGICO DE VENTAS DE LA EMPRESA "MP" (MESSINA & PASINA).
+ANALIZAS LA SIGUIENTE TABLA DE RESUMEN HISTÓRICO AGREGADO Y RESPONDÉS CON PROPUESTAS PRÁCTICAS, NÚMEROS CLAVE Y TONALIDAD CORPORATIVA PROFESIONAL.
+
+TABLA DE VENTAS HISTÓRICAS (Top 200 combinaciones por importe, campos: Año | Mes | Vendedor | Rubro | Provincia | Formulario | Impo Neto | Bultos | Cant. Ítems | Clientes Únicos):
+{context_str}
+
+KPIs GLOBALES DE TODA LA BASE (sin filtros):
+- Facturación Total Histórica: $ {kpi_g['impo_total']:,.2f}
+- Bultos Totales: {kpi_g['bultos_total']:,.0f}
+- Clientes Únicos Históricos: {kpi_g['clientes']:,}
+- Total de Registros: {kpi_g['registros']:,}
+- Período: {kpi_g['fecha_min']} → {kpi_g['fecha_max']}
+
+NOTA: Los registros con importe negativo son devoluciones (DEVOLUCION B). El impo_neto ya refleja el neto.
+
+CONSULTA DEL USUARIO: "{prompt_final}"
+
+Respondé con formato markdown enriquecido (negritas, listas, subtítulos con ##, tablas si aplica).
+Sé directo, ejecutivo y aportá valor real con números concretos extraídos de los datos.
+        """
+        with st.spinner("🧠 Gemini está analizando toda la base de ventas..."):
+            try:
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(prompt_completo)
+                st.markdown("---")
+                st.markdown("### 📋 Respuesta del Consultor Estratégico:")
+                st.markdown(response.text)
+            except Exception as e:
+                st.error(f"Error al procesar con IA: {e}")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CARGA HISTÓRICA (auxiliar)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_uploader():
+    with st.expander("📤 Carga Histórica de Ventas (ventas.dbi)"):
+        st.write(
+            "Subí un archivo `ventas.dbi` histórico para importarlo de forma incremental en Supabase. "
+            "El sistema evita duplicados usando la restricción única de la base de datos."
+        )
+        uploaded_file = st.file_uploader(
+            "Seleccioná el archivo ventas.dbi",
+            type=["dbi"],
+            key="uploader_ventas_v3",
+        )
+        if uploaded_file is not None:
+            if st.button("🚀 Iniciar Procesamiento e Importación", use_container_width=True, key="btn_import_v3"):
+                import os
+                temp_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"
+                )
+                os.makedirs(temp_dir, exist_ok=True)
+                temp_path = os.path.join(temp_dir, "temp_ventas_hist.dbi")
+
+                with open(temp_path, "wb") as f_t:
+                    f_t.write(uploaded_file.getbuffer())
+
+                try:
+                    import sys
+                    utils_dir = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils"
+                    )
+                    if utils_dir not in sys.path:
+                        sys.path.insert(0, utils_dir)
+                    from ventas_importer import import_ventas_dbi
+
+                    st.info("Iniciando importación incremental...")
                     progress_bar = st.progress(0)
                     status_text = st.empty()
-                    
-                    batch_dict = {}
-                    batch_size = 1000
-                    total_procesados = 0
-                    
-                    with dbf.Table(temp_path, codepage='cp1252') as table:
-                        table.open()
-                        if table._meta.memo:
-                            original_get_memo = table._meta.memo.get_memo
-                            def safe_get_memo(block):
-                                try:
-                                    return original_get_memo(block)
-                                except Exception:
-                                    return b""
-                            table._meta.memo.get_memo = safe_get_memo
-                        for i, rec in enumerate(table):
-                            fecha_iso = parse_dbf_date(rec.FECHA)
-                            if not fecha_iso:
-                                continue
-                                
-                            venta_item = {
-                                "rubro": parse_dbf_str(rec.RUBRO),
-                                "fecha": fecha_iso,
-                                "empresa": parse_dbf_str(rec.EMPRESA),
-                                "subrubro": parse_dbf_str(rec.SUBRUBRO),
-                                "numero": parse_dbf_int(rec.NUMERO),
-                                "localidad": parse_dbf_str(rec.LOCALIDAD),
-                                "provincia": parse_dbf_str(rec.PROVINCIA),
-                                "formulario": parse_dbf_str(rec.FORMULARIO),
-                                "e_mail": parse_dbf_str(rec.E_MAIL),
-                                "telefono": parse_dbf_str(rec.TELEFONO),
-                                "pais": parse_dbf_str(rec.PAIS),
-                                "codigo": parse_dbf_int(rec.CODIGO),
-                                "cod_alfa": parse_dbf_str(rec.COD_ALFA),
-                                "unidades": parse_dbf_float(rec.UNIDADES),
-                                "codigocomp": parse_dbf_int(rec.CODIGOCOMP),
-                                "tipo": parse_dbf_int(rec.TIPO),
-                                "dto": parse_dbf_float(rec.DTO),
-                                "dto1": parse_dbf_float(rec.DTO1),
-                                "dto2": parse_dbf_float(rec.DTO2),
-                                "alt_bonifi": parse_dbf_str(rec.ALT_BONIFI),
-                                "grupo": parse_dbf_str(rec.GRUPO),
-                                "sinonimo": parse_dbf_str(rec.SINONIMO),
-                                "ean": parse_dbf_str(rec.EAN),
-                                "clien": parse_dbf_str(rec.CLIEN),
-                                "cod_clien": parse_dbf_int(rec.COD_CLIEN),
-                                "producto": parse_dbf_str(rec.PRODUCTO),
-                                "vendedo": parse_dbf_str(rec.VENDEDO),
-                                "domicilio": parse_dbf_str(rec.DOMICILIO),
-                                "deposito": parse_dbf_str(rec.DEPOSITO),
-                                "bultos": parse_dbf_float(rec.BULTOS),
-                                "impo": parse_dbf_float(rec.IMPO)
-                            }
-                            
-                            # Usar clave única como clave de diccionario para deduplicar dentro del mismo lote
-                            key = (
-                                venta_item["fecha"],
-                                venta_item["empresa"],
-                                venta_item["formulario"],
-                                venta_item["numero"],
-                                venta_item["cod_clien"],
-                                venta_item["cod_alfa"],
-                                venta_item["bultos"]
+
+                    def _on_progress(done, total):
+                        status_text.text(f"Importados: {done:,} / {total:,}")
+                        progress_bar.progress(min(1.0, done / max(total, 1)))
+
+                    stats = import_ventas_dbi(
+                        supabase, temp_path,
+                        batch_size=1000,
+                        on_progress=_on_progress,
+                    )
+                    total_proc = stats["importados"]
+                    total_rec = stats["total_dbf"]
+                    progress_bar.progress(1.0)
+                    status_text.text(f"Completado: {total_proc:,} registros importados.")
+                    rejected_sin_fecha = stats["sin_fecha"]
+                    rejected_duplicado = stats["duplicados_dbf"]
+                    total_rechazados = rejected_sin_fecha + rejected_duplicado
+
+                    # ── Generar archivos de salida ───────────────────────────
+                    import datetime as _dt
+                    ts      = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    out_dir = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Subidos"
+                    )
+                    os.makedirs(out_dir, exist_ok=True)
+
+                    log_path = os.path.join(out_dir, f"import_log_{ts}.txt")
+
+                    # Escribir LOG TXT
+                    with open(log_path, "w", encoding="utf-8") as lf:
+                        lf.write("=" * 65 + "\n")
+                        lf.write("  LOG DE IMPORTACIÓN — ANÁLISIS DE GESTIÓN\n")
+                        lf.write("=" * 65 + "\n")
+                        lf.write(f"  Fecha/Hora : {_dt.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+                        lf.write(f"  Archivo    : {uploaded_file.name}\n")
+                        lf.write("=" * 65 + "\n\n")
+                        lf.write(f"  TOTAL EN DBI            : {total_rec:>10,}\n")
+                        lf.write(f"  IMPORTADOS EXITOSAMENTE : {total_proc:>10,}\n")
+                        lf.write(f"  RECHAZADOS (no importados): {total_rechazados:>8,}\n\n")
+                        lf.write(f"  - FECHA_INVALIDA: {rejected_sin_fecha}\n")
+                        lf.write(f"  - DUPLICADO_EXACTO_EN_DBI: {rejected_duplicado}\n\n")
+                        if total_rechazados == 0:
+                            lf.write("  ✅ Importación 100% completa. Ningún registro rechazado.\n")
+                        lf.write("\n" + "=" * 65 + "\n")
+
+                    # ── Mostrar resultados en UI ─────────────────────────────
+                    st.success(f"🎉 ¡Importación completada! {total_proc:,} registros procesados.")
+                    rc1, rc2, rc3 = st.columns(3)
+                    rc1.metric("✅ Importados",   f"{total_proc:,}")
+                    rc2.metric("❌ Rechazados",   f"{total_rechazados:,}")
+                    rc3.metric("📋 Total en DBI", f"{total_rec:,}")
+
+                    if total_rechazados > 0:
+                        with st.expander(f"⚠️ Ver detalle de {total_rechazados} registros no importados"):
+                            st.markdown(f"**📅 Fecha inválida:** {rejected_sin_fecha}")
+                            st.markdown(f"**🔁 Duplicado exacto en DBI:** {rejected_duplicado}")
+                            st.caption(
+                                "Los duplicados exactos en el DBI solo se importan una vez "
+                                "(misma clave fecha+empresa+formulario+numero+cod_clien+cod_alfa+bultos+impo)."
                             )
-                            batch_dict[key] = venta_item
-                            
-                            if len(batch_dict) >= batch_size:
-                                supabase.table("ventas").upsert(list(batch_dict.values()), on_conflict="fecha,empresa,formulario,numero,cod_clien,cod_alfa,bultos").execute()
-                                total_procesados += len(batch_dict)
-                                status_text.text(f"Importados: {total_procesados} / {total_records} registros")
-                                progress_bar.progress(min(1.0, total_procesados / total_records))
-                                batch_dict = {}
-                        
-                        if batch_dict:
-                            supabase.table("ventas").upsert(list(batch_dict.values()), on_conflict="fecha,empresa,formulario,numero,cod_clien,cod_alfa,bultos").execute()
-                            total_procesados += len(batch_dict)
-                            progress_bar.progress(1.0)
-                            status_text.text(f"Importados: {total_procesados} / {total_records} registros (Completado)")
-                            
-                    st.success(f"🎉 ¡Sincronización exitosa! Se procesaron e importaron {total_procesados} registros de ventas.")
+                        with open(log_path, "rb") as lf:
+                            st.download_button(
+                                "📥 Log de importación (.txt)",
+                                data=lf.read(),
+                                file_name=f"import_log_{ts}.txt",
+                                mime="text/plain",
+                            )
+                    else:
+                        st.info("✅ Ningún registro fue rechazado — importación 100% completa.")
+                        with open(log_path, "rb") as lf:
+                            st.download_button("📥 Log de importación (.txt)", data=lf.read(),
+                                file_name=f"import_log_{ts}.txt", mime="text/plain")
+
+                    load_sales_range.clear()
+                    load_sales_full_for_ia.clear()
                     st.rerun()
+
                 except Exception as e:
                     import traceback
-                    traceback.print_exc()
                     st.error(f"Error procesando el archivo: {e}")
+                    st.code(traceback.format_exc())
                 finally:
                     if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                    # Eliminar también archivos de memo ficticios
-                    base, _ = os.path.splitext(temp_path)
+                        try: os.remove(temp_path)
+                        except: pass
+                    base = os.path.splitext(temp_path)[0]
                     for ext in [".dbt", ".fpt"]:
                         p = base + ext
                         if os.path.exists(p):
                             try: os.remove(p)
                             except: pass
-
-    # --- SECCIÓN DE INTELIGENCIA ARTIFICIAL (MOTOR DE CONSULTORÍA) ---
-    st.markdown('<div class="ia-panel">', unsafe_allow_html=True)
-    st.markdown("<h2 style='color:#a5b4fc; margin-top:0;'>🧠 Consultor Estratégico IA (Gemini Brain)</h2>", unsafe_allow_html=True)
-    st.write("El analista de inteligencia artificial evalúa el comportamiento general de las ventas e identifica riesgos u oportunidades.")
-
-    if not api_key:
-        st.info("🔑 Configura `GOOGLE_API_KEY` en tu archivo `secrets.toml` para habilitar el motor de consultoría estratégica por IA.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-
-    # Generación de contexto agregado para no sobrecargar el límite de tokens
-    # Agrupamos por mes, vendedor y rubro
-    df_filtered['mes_año'] = df_filtered['fecha'].dt.strftime('%Y-%m')
-    resumen_ia = df_filtered.groupby(['mes_año', 'vendedo', 'rubro']).agg(
-        total_ventas=('impo', 'sum'),
-        cant_operaciones=('impo', 'count'),
-        clientes_distintos=('cod_clien', 'nunique')
-    ).reset_index()
-    
-    # Quedarnos con el Top 30 combinaciones para mantener el contexto extremadamente limpio y veloz
-    resumen_ia = resumen_ia.sort_values(by='total_ventas', ascending=False).head(40)
-    context_str = resumen_ia.to_string(index=False)
-    
-    # Botones con prompts preestablecidos
-    col_ia1, col_ia2, col_ia3 = st.columns(3)
-    prompt_ia = None
-    
-    with col_ia1:
-        if st.button("📊 Generar Informe Ejecutivo", use_container_width=True):
-            prompt_ia = "Realiza un informe ejecutivo de alto nivel resumiendo el comportamiento comercial, los vendedores líderes, rubros principales y sugerencias estratégicas."
-            
-    with col_ia2:
-        if st.button("🚨 Alerta de Desvíos o Concentración", use_container_width=True):
-            prompt_ia = "Analiza los datos buscando alertas comerciales. ¿Hay excesiva dependencia en algún vendedor o rubro? ¿Hay clientes inactivos o baja capilaridad?"
-            
-    with col_ia3:
-        if st.button("💡 Propuesta de Plan Comercial", use_container_width=True):
-            prompt_ia = "Propone 3 iniciativas comerciales concretas para expandir la facturación y la capilaridad basándote en la distribución actual de ventas."
-            
-    pregunta_libre = st.text_input("Hazle una pregunta personalizada al Consultor de Ventas:", placeholder="Ej: ¿Qué vendedor tiene mejor relación importe/operaciones?")
-    
-    prompt_final = prompt_ia if prompt_ia else pregunta_libre
-    
-    if prompt_final:
-        # Prompt final enriquecido con el contexto autónomo de toda la historia cargada
-        prompt_completo = f"""
-        ERES EL CONSULTOR ESTRATÉGICO DE NEGOCIOS DE LA EMPRESA "MP" (MESSINA & PASINA).
-        TU TAREA ES ANALIZAR LA SIGUIENTE TABLA DE RESUMEN DE VENTAS HISTÓRICAS AGREGADAS Y CONTESTAR LA PREGUNTA DEL USUARIO CON PROPUESTAS PRÁCTICAS, NÚMEROS CLAVE Y TONALIDAD CORPORATIVA.
-
-        TABLA DE RESUMEN DE VENTAS (Campos: Mes/Año, Vendedor, Rubro, Total Ventas $, Cant. Operaciones, Clientes Distintos):
-        {context_str}
-
-        INFORMACIÓN GENERAL DEL PERÍODO SELECCIONADO:
-        - Facturación Total: $ {total_facturado:,.2f}
-        - Unidades Totales Despachadas: {total_unidades:,.0f}
-        - Cantidad de Transacciones: {cant_transacciones:,}
-        - Clientes Únicos Atendidos: {df_filtered['cod_clien'].nunique()}
-
-        SOLICITUD DEL USUARIO: "{prompt_final}"
-
-        Escribe tu respuesta con formato markdown enriquecido (negritas, listas, subtítulos). Sé directo, profesional y aporta valor ejecutivo real.
-        """
-        
-        with st.spinner("🧠 Gemini está analizando las tendencias de ventas..."):
-            try:
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content(prompt_completo)
-                
-                st.markdown("---")
-                st.markdown("### 📋 Análisis e Insights del Consultor:")
-                st.markdown(response.text)
-            except Exception as e:
-                st.error(f"Error al procesar la consulta con IA: {e}")
-                
-    st.markdown('</div>', unsafe_allow_html=True)

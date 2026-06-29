@@ -1,0 +1,11 @@
+{
+  "FTP_HOST": "messina.dns-dns.com",
+  "FTP_PORT": 59921,
+  "FTP_USER": "usuario_ftp",
+  "FTP_PASS": "password_ftp",
+  "SUPABASE_URL": "https://TU_PROYECTO.supabase.co",
+  "SUPABASE_KEY": "tu_service_role_o_anon_key",
+  "IMPORTA_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Validador\\Importa",
+  "EXPORTA_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Validador\\Exporta",
+  "VENTAS_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Ventas"
+}

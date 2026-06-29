@@ -35,6 +35,10 @@ Thumbs.db
 *.spec
 build/
 dist/
+Subidos/
+
+# Local sync config with real credentials (use .example as template)
+utils/windows_sync_config.json
 
 # Local databases and exports (Presea Importa/Exporta directories)
 *.dbi

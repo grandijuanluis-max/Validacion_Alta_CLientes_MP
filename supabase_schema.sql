@@ -101,11 +101,7 @@ CREATE TABLE public.ventas (
     impo NUMERIC(15,2)
 );
 
--- Restricción única compuesta para evitar duplicados al sincronizar
+-- Restricción única compuesta para evitar duplicados al sincronizar (8 campos, incluye impo)
 ALTER TABLE public.ventas 
-ADD CONSTRAINT unique_venta_registro UNIQUE (fecha, empresa, formulario, numero, cod_clien, cod_alfa, bultos);
-
--- Índice compuesto para acelerar búsquedas
-CREATE UNIQUE INDEX idx_unique_venta_composite 
-ON public.ventas (fecha, empresa, formulario, numero, cod_clien, cod_alfa, bultos);
+ADD CONSTRAINT ventas_unique_item UNIQUE (fecha, empresa, formulario, numero, cod_clien, cod_alfa, bultos, impo);
 

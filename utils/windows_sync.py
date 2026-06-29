@@ -706,144 +706,24 @@ def sync_ventas_to_ftp_and_supabase(config):
             
     # 3. Leer e importar datos a Supabase
     logger.info("Importando registros de ventas en la base de datos desde ventas.dbi...")
-    
-    def parse_dbf_int(val):
-        if val is None:
-            return 0
-        try:
-            return int(val)
-        except:
-            return 0
-            
-    def parse_dbf_float(val):
-        if val is None:
-            return 0.0
-        try:
-            return float(val)
-        except:
-            return 0.0
-
-    def parse_dbf_str(val):
-        if val is None:
-            return ""
-        try:
-            return str(val).strip()
-        except:
-            return ""
-            
-    def parse_dbf_date(val):
-        if not val:
-            return None
-        if isinstance(val, (datetime.date, datetime.datetime)):
-            return val.strftime("%Y-%m-%d")
-        val_str = str(val).strip()
-        if len(val_str) >= 10 and val_str[4] == '-' and val_str[7] == '-':
-            return val_str[:10]
-        try:
-            parts = val_str.split('/')
-            if len(parts) == 3:
-                d, m, y = parts
-                return f"{y.zfill(4)}-{m.zfill(2)}-{d.zfill(2)}"
-        except:
-            pass
-        return None
 
     try:
-        batch_dict = {}
-        batch_size = 1000
-        total_procesados = 0
-        
-        # Crear archivos de memo ficticios si no existen para evitar errores si no se generaron o no están presentes
-        def create_dummy_memo_files(dbf_path):
-            base, _ = os.path.splitext(dbf_path)
-            for ext in [".dbt", ".fpt", ".DBT", ".FPT"]:
-                p = base + ext
-                if not os.path.exists(p):
-                    try:
-                        with open(p, "wb") as f:
-                            if ext.lower() == ".dbt":
-                                f.write(b'\x01\x00\x00\x00' + b'\x00' * 508)
-                            else:
-                                f.write(b'\x00\x00\x00\x01\x00\x00\x00\x40' + b'\x00' * 504)
-                    except:
-                        pass
+        # Importador compartido (misma lógica que la app Streamlit)
+        if BASE_DIR not in sys.path:
+            sys.path.insert(0, BASE_DIR)
+        from ventas_importer import import_ventas_dbi
 
-        create_dummy_memo_files(path_ventas)
-        
-        with dbf.Table(path_ventas, codepage='cp1252') as table:
-            table.open()
-            if table._meta.memo:
-                original_get_memo = table._meta.memo.get_memo
-                def safe_get_memo(block):
-                    try:
-                        return original_get_memo(block)
-                    except Exception:
-                        return b""
-                table._meta.memo.get_memo = safe_get_memo
-            for rec in table:
-                fecha_iso = parse_dbf_date(rec.FECHA)
-                if not fecha_iso:
-                    # Fecha requerida para el índice compuesto
-                    continue
-                    
-                # Mapear los 31 campos de ventas en mayúsculas desde el registro DBF
-                venta_item = {
-                    "rubro": parse_dbf_str(rec.RUBRO),
-                    "fecha": fecha_iso,
-                    "empresa": parse_dbf_str(rec.EMPRESA),
-                    "subrubro": parse_dbf_str(rec.SUBRUBRO),
-                    "numero": parse_dbf_int(rec.NUMERO),
-                    "localidad": parse_dbf_str(rec.LOCALIDAD),
-                    "provincia": parse_dbf_str(rec.PROVINCIA),
-                    "formulario": parse_dbf_str(rec.FORMULARIO),
-                    "e_mail": parse_dbf_str(rec.E_MAIL),
-                    "telefono": parse_dbf_str(rec.TELEFONO),
-                    "pais": parse_dbf_str(rec.PAIS),
-                    "codigo": parse_dbf_int(rec.CODIGO),
-                    "cod_alfa": parse_dbf_str(rec.COD_ALFA),
-                    "unidades": parse_dbf_float(rec.UNIDADES),
-                    "codigocomp": parse_dbf_int(rec.CODIGOCOMP),
-                    "tipo": parse_dbf_int(rec.TIPO),
-                    "dto": parse_dbf_float(rec.DTO),
-                    "dto1": parse_dbf_float(rec.DTO1),
-                    "dto2": parse_dbf_float(rec.DTO2),
-                    "alt_bonifi": parse_dbf_str(rec.ALT_BONIFI),
-                    "grupo": parse_dbf_str(rec.GRUPO),
-                    "sinonimo": parse_dbf_str(rec.SINONIMO),
-                    "ean": parse_dbf_str(rec.EAN),
-                    "clien": parse_dbf_str(rec.CLIEN),
-                    "cod_clien": parse_dbf_int(rec.COD_CLIEN),
-                    "producto": parse_dbf_str(rec.PRODUCTO),
-                    "vendedo": parse_dbf_str(rec.VENDEDO),
-                    "domicilio": parse_dbf_str(rec.DOMICILIO),
-                    "deposito": parse_dbf_str(rec.DEPOSITO),
-                    "bultos": parse_dbf_float(rec.BULTOS),
-                    "impo": parse_dbf_float(rec.IMPO)
-                }
-                
-                # Usar clave única como clave de diccionario para deduplicar dentro del mismo lote
-                key = (
-                    venta_item["fecha"],
-                    venta_item["empresa"],
-                    venta_item["formulario"],
-                    venta_item["numero"],
-                    venta_item["cod_clien"],
-                    venta_item["cod_alfa"],
-                    venta_item["bultos"]
-                )
-                batch_dict[key] = venta_item
-                
-                if len(batch_dict) >= batch_size:
-                    supabase.table("ventas").upsert(list(batch_dict.values()), on_conflict="fecha,empresa,formulario,numero,cod_clien,cod_alfa,bultos").execute()
-                    total_procesados += len(batch_dict)
-                    logger.info(f"  Upserted {total_procesados} ventas en Supabase...")
-                    batch_dict = {}
-                    
-            if batch_dict:
-                supabase.table("ventas").upsert(list(batch_dict.values()), on_conflict="fecha,empresa,formulario,numero,cod_clien,cod_alfa,bultos").execute()
-                total_procesados += len(batch_dict)
-                logger.info(f"  Upserted {total_procesados} ventas en Supabase...")
-                
+        stats = import_ventas_dbi(supabase, path_ventas, batch_size=1000, logger=logger)
+        total_procesados = stats["importados"]
+        logger.info(
+            "Importación ventas: %s registros | DBF=%s | sin_fecha=%s | dup_dbf=%s | rango=%s→%s",
+            total_procesados,
+            stats["total_dbf"],
+            stats["sin_fecha"],
+            stats["duplicados_dbf"],
+            stats.get("min_fecha"),
+            stats.get("max_fecha"),
+        )
         # 4. Mover el archivo procesado a la carpeta Subidos
         subidos_dir = os.path.join(ventas_dir, "Subidos")
         os.makedirs(subidos_dir, exist_ok=True)
@@ -1084,7 +964,7 @@ def main():
     # 2. Ejecutar subida de carpeta local EXPORTA al FTP e importar a Supabase
     sync_exporta_to_ftp_and_supabase(config)
     
-    # 3. Ejecutar procesamiento de ventas.csv (Análisis de Gestión)
+    # 3. Importar ventas.dbi desde carpeta Ventas de Presea → Supabase
     sync_ventas_to_ftp_and_supabase(config)
     
     logger.info("Proceso general del Servidor Windows finalizado.")
