@@ -9,6 +9,7 @@ from modulos.db import supabase
 from modulos.api_afip import consultar_cuit_afip
 from modulos.api_nosis import consultar_y_evaluar_nosis
 from modulos.generador_dbi import generar_archivo_dbi
+from modulos.presea_db import fetch_presea_clientes, migration_sql, update_cliente
 from utils.ftp_sync import upload_exports
 
 MAP_TIPO_RESP = {
@@ -93,11 +94,11 @@ def _exportar_a_presea(client_data, datos_actualizados):
     generar_archivo_dbi(df_one, numero_inicio_codigo=codigo)
     ftp_ok, ftp_msg = upload_exports()
     if ftp_ok:
-        supabase.table("clientes_pendientes").update({
+        update_cliente(supabase, str(client_data["id"]), {
             **datos_actualizados,
             "estado": "Exportado",
             "validado_nosis": True,
-        }).eq("id", str(client_data["id"])).execute()
+        })
         st.session_state["validador_success"] = (
             f"Cambios exportados a Presea (código {codigo}). {ftp_msg}"
         )
@@ -113,20 +114,32 @@ def render_clientes_presea():
     )
 
     try:
-        response = (
-            supabase.table("clientes_pendientes")
-            .select("*")
-            .eq("origen", "presea")
-            .execute()
-        )
-        if not response.data:
+        rows, migration_status = fetch_presea_clientes(supabase)
+
+        if migration_status == "migration_required":
+            st.error(
+                "Faltan columnas en Supabase (`origen`, `codigo`). "
+                "Ejecutá la migración SQL antes de usar esta sección."
+            )
+            st.markdown("**Supabase → SQL Editor → New query → pegar y Run:**")
+            st.code(migration_sql(), language="sql")
+            return
+
+        if migration_status == "migration_recommended":
+            st.warning(
+                "Columna `origen` no encontrada. Mostrando clientes con código < 40.000. "
+                "Ejecutá la migración SQL para el funcionamiento completo."
+            )
+
+        if not rows:
             st.info(
                 "No hay clientes importados desde Presea. "
-                "Verifique que `windows_sync.exe` procese `CLIENTESPA.DBI` desde la carpeta Exporta."
+                "Verifique que `windows_sync.exe` procese `CLIENTESPA.DBI` desde la carpeta Exporta "
+                "y que la migración SQL esté aplicada."
             )
             return
 
-        df = pd.DataFrame(response.data)
+        df = pd.DataFrame(rows)
         df["tipo_resp_desc"] = df["tipo_resp"].apply(
             lambda x: MAP_TIPO_RESP.get(str(x), str(x) if x else "N/A")
         )
@@ -149,12 +162,12 @@ def render_clientes_presea():
         df_filtrado = df.copy()
         if busqueda.strip():
             q = busqueda.strip().lower()
-            mask = (
-                df_filtrado["nombre"].astype(str).str.lower().str.contains(q, na=False)
-                | df_filtrado["n_fantasia"].astype(str).str.lower().str.contains(q, na=False)
-                | df_filtrado["codigo"].astype(str).str.contains(q, na=False)
-                | df_filtrado["cuit"].astype(str).str.contains(q, na=False)
-            )
+            mask = df_filtrado["nombre"].astype(str).str.lower().str.contains(q, na=False)
+            if "n_fantasia" in df_filtrado.columns:
+                mask |= df_filtrado["n_fantasia"].astype(str).str.lower().str.contains(q, na=False)
+            if "codigo" in df_filtrado.columns:
+                mask |= df_filtrado["codigo"].astype(str).str.contains(q, na=False)
+            mask |= df_filtrado["cuit"].astype(str).str.contains(q, na=False)
             df_filtrado = df_filtrado[mask]
 
         if filtro_estado != "Todos":
@@ -164,20 +177,20 @@ def render_clientes_presea():
             st.warning("No se encontraron clientes con ese criterio.")
             return
 
-        display_df = df_filtrado[
-            ["codigo", "nombre", "cuit", "tipo_resp_desc", "vendedor", "estado"]
-        ].copy()
-        display_df.rename(
-            columns={
-                "codigo": "Código",
-                "nombre": "Razón Social",
-                "cuit": "CUIT",
-                "tipo_resp_desc": "Tipo Resp.",
-                "vendedor": "Vendedor",
-                "estado": "Estado",
-            },
-            inplace=True,
-        )
+        cols_display = ["codigo", "nombre", "cuit", "tipo_resp_desc", "estado"]
+        if "vendedor" in df_filtrado.columns:
+            cols_display.insert(-1, "vendedor")
+        cols_display = [c for c in cols_display if c in df_filtrado.columns]
+        display_df = df_filtrado[cols_display].copy()
+        rename_map = {
+            "codigo": "Código",
+            "nombre": "Razón Social",
+            "cuit": "CUIT",
+            "tipo_resp_desc": "Tipo Resp.",
+            "vendedor": "Vendedor",
+            "estado": "Estado",
+        }
+        display_df.rename(columns={k: v for k, v in rename_map.items() if k in display_df.columns}, inplace=True)
 
         st.markdown("### Seleccione un cliente")
         event = st.dataframe(
@@ -309,8 +322,13 @@ def render_clientes_presea():
                 if enviar_presea:
                     _exportar_a_presea(client_data, datos)
                 else:
-                    supabase.table("clientes_pendientes").update(datos).eq("id", client_id).execute()
-                    st.session_state["validador_success"] = "Validación ARCA guardada (sin exportar a Presea)."
+                    ok, partial = update_cliente(supabase, client_id, datos)
+                    if ok and partial:
+                        st.session_state["validador_warning"] = (
+                            "Datos guardados parcialmente. Ejecutá la migración SQL en Supabase."
+                        )
+                    else:
+                        st.session_state["validador_success"] = "Validación ARCA guardada (sin exportar a Presea)."
                 st.rerun()
 
         # ── MODO NOSIS ─────────────────────────────────────────────────────────
@@ -349,8 +367,13 @@ def render_clientes_presea():
                 if enviar_presea_n:
                     _exportar_a_presea(client_data, datos_n)
                 else:
-                    supabase.table("clientes_pendientes").update(datos_n).eq("id", client_id).execute()
-                    st.session_state["validador_success"] = "Validación NOSIS registrada (sin exportar a Presea)."
+                    ok, partial = update_cliente(supabase, client_id, datos_n)
+                    if ok and partial:
+                        st.session_state["validador_warning"] = (
+                            "Validación NOSIS guardada parcialmente. Ejecutá la migración SQL."
+                        )
+                    else:
+                        st.session_state["validador_success"] = "Validación NOSIS registrada (sin exportar a Presea)."
                 st.rerun()
 
     except Exception as e:
