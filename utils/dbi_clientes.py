@@ -213,6 +213,7 @@ def _load_existing_presea(supabase, log, supports_presea: bool = True) -> dict[i
                 supabase.table("clientes_pendientes")
                 .select("id, codigo")
                 .lt("codigo", PRESEA_CODIGO_MAX + 1)
+                .order("codigo")
                 .range(offset, offset + page - 1)
                 .execute()
             )
@@ -245,16 +246,24 @@ def _clean_payload(item: dict) -> dict:
     return out
 
 
+def _prepare_batch(items: list[dict]) -> list[dict]:
+    """Unifica claves del lote (PostgREST exige mismas keys en bulk upsert/insert)."""
+    cleaned = [_clean_payload(it) for it in items]
+    keys = sorted({k for row in cleaned for k in row})
+    return [{k: row.get(k) for k in keys} for row in cleaned]
+
+
 def _insert_batch(supabase, items: list[dict], log, use_upsert: bool = False) -> tuple[int, int]:
     """Inserta lote; en fallo reintenta fila a fila. Retorna (ok, fail)."""
     if not items:
         return 0, 0
-    payload = [_clean_payload(it) for it in items]
+    payload = _prepare_batch(items)
+    tbl = supabase.table("clientes_pendientes")
     try:
-        if use_upsert and hasattr(supabase.table("clientes_pendientes"), "upsert"):
-            supabase.table("clientes_pendientes").upsert(payload, on_conflict="codigo").execute()
+        if use_upsert and hasattr(tbl, "upsert"):
+            tbl.upsert(payload, on_conflict="codigo").execute()
         else:
-            supabase.table("clientes_pendientes").insert(payload).execute()
+            tbl.insert(payload).execute()
         return len(payload), 0
     except Exception as e_batch:
         log.warning("Lote de %s falló (%s), reintentando individual...", len(items), str(e_batch)[:120])
@@ -270,23 +279,30 @@ def _insert_batch(supabase, items: list[dict], log, use_upsert: bool = False) ->
 def _insert_one(supabase, item: dict, log, use_upsert: bool = False) -> bool:
     """Inserta un registro; reintenta con columnas mínimas si falla."""
     payload = _clean_payload(item)
+    tbl = supabase.table("clientes_pendientes")
     try:
-        if use_upsert and hasattr(supabase.table("clientes_pendientes"), "upsert"):
-            supabase.table("clientes_pendientes").upsert(payload, on_conflict="codigo").execute()
+        if use_upsert and hasattr(tbl, "upsert"):
+            tbl.upsert(payload, on_conflict="codigo").execute()
         else:
-            supabase.table("clientes_pendientes").insert(payload).execute()
+            tbl.insert(payload).execute()
         return True
     except Exception as e1:
         err1 = str(e1)
         reduced = {k: v for k, v in payload.items() if k not in OPTIONAL_COLS}
         try:
-            supabase.table("clientes_pendientes").insert(reduced).execute()
+            if use_upsert and hasattr(tbl, "upsert"):
+                tbl.upsert(reduced, on_conflict="codigo").execute()
+            else:
+                tbl.insert(reduced).execute()
             log.warning("Insert OK (payload reducido) codigo=%s: %s", item.get("codigo"), err1[:120])
             return True
         except Exception:
             minimal = {k: reduced[k] for k in MINIMAL_INSERT_COLS if k in reduced}
             try:
-                supabase.table("clientes_pendientes").insert(minimal).execute()
+                if use_upsert and hasattr(tbl, "upsert"):
+                    tbl.upsert(minimal, on_conflict="codigo").execute()
+                else:
+                    tbl.insert(minimal).execute()
                 log.warning("Insert OK (mínimo) codigo=%s", item.get("codigo"))
                 return True
             except Exception as e3:
@@ -297,27 +313,9 @@ def _insert_one(supabase, item: dict, log, use_upsert: bool = False) -> bool:
                 return False
 
 
-def _insert_batch(supabase, items: list[dict], log) -> tuple[int, int]:
-    """Inserta lote; en fallo reintenta fila a fila. Retorna (ok, fail)."""
-    if not items:
-        return 0, 0
-    payload = [_clean_payload(it) for it in items]
-    try:
-        supabase.table("clientes_pendientes").insert(payload).execute()
-        return len(payload), 0
-    except Exception as e_batch:
-        log.warning("Lote de %s falló (%s), reintentando individual...", len(items), str(e_batch)[:120])
-        ok = fail = 0
-        for item in items:
-            if _insert_one(supabase, item, log):
-                ok += 1
-            else:
-                fail += 1
-        return ok, fail
-
-
 def _update_one(supabase, row_id: str, item: dict, log) -> bool:
-    upd = _clean_payload({k: v for k, v in item.items() if k not in ("estado", "origen")})
+    skip = ("estado", "origen", "validado_arca", "validado_nosis")
+    upd = _clean_payload({k: v for k, v in item.items() if k not in skip})
     try:
         supabase.table("clientes_pendientes").update(upd).eq("id", row_id).execute()
         return True

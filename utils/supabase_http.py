@@ -39,6 +39,11 @@ class _TableQuery:
         self._filters.append(f"{col}=lt.{val}")
         return self
 
+    def order(self, col: str, desc: bool = False):
+        direction = ".desc" if desc else ".asc"
+        self._filters.append(f"order={col}{direction}")
+        return self
+
     def limit(self, n: int):
         self._limit = n
         return self
