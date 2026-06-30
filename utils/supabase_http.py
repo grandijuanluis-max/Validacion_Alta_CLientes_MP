@@ -24,6 +24,8 @@ class _TableQuery:
         self._limit: Optional[int] = None
         self._insert_data: Any = None
         self._update_data: Any = None
+        self._upsert: bool = False
+        self._on_conflict: str = ""
 
     def select(self, cols: str = "*"):
         self._cols = cols
@@ -49,6 +51,12 @@ class _TableQuery:
         self._insert_data = data
         return self
 
+    def upsert(self, data: Any, on_conflict: str = "codigo"):
+        self._insert_data = data
+        self._upsert = True
+        self._on_conflict = on_conflict
+        return self
+
     def update(self, data: dict):
         self._update_data = data
         return self
@@ -60,7 +68,15 @@ class _TableQuery:
             extra_headers["Range-Unit"] = "items"
             extra_headers["Range"] = f"{start}-{end}"
         if self._insert_data is not None:
-            return self._client._request("POST", self._table, body=self._insert_data, extra_headers=extra_headers)
+            prefer = "return=representation"
+            if self._upsert:
+                prefer = f"return=representation,resolution=merge-duplicates"
+            return self._client._request(
+                "POST", self._table, body=self._insert_data,
+                extra_headers=extra_headers,
+                prefer=prefer,
+                on_conflict=self._on_conflict if self._upsert else None,
+            )
         if self._update_data is not None:
             qs = self._build_qs()
             return self._client._request("PATCH", self._table, qs=qs, body=self._update_data, extra_headers=extra_headers)
@@ -83,15 +99,21 @@ class SupabaseHttpClient:
     def table(self, name: str) -> _TableQuery:
         return _TableQuery(self, name)
 
-    def _request(self, method: str, table: str, qs: str = "", body: Any = None, extra_headers: Optional[dict] = None) -> _Result:
+    def _request(self, method: str, table: str, qs: str = "", body: Any = None,
+                 extra_headers: Optional[dict] = None, prefer: str = "return=representation",
+                 on_conflict: Optional[str] = None) -> _Result:
         url = f"{self.url}/rest/v1/{table}"
-        if qs:
+        if method == "GET" and qs:
             url += "?" + qs
+        elif method == "PATCH" and qs:
+            url += "?" + qs
+        elif on_conflict:
+            url += f"?on_conflict={urllib.parse.quote(on_conflict)}"
         headers = {
             "apikey": self.key,
             "Authorization": f"Bearer {self.key}",
             "Content-Type": "application/json",
-            "Prefer": "return=representation",
+            "Prefer": prefer,
         }
         if extra_headers:
             headers.update(extra_headers)
