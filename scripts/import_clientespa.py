@@ -17,7 +17,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "utils"))
 sys.path.insert(0, ROOT)
 
-from supabase import create_client
 from dbi_clientes_loader import import_clientespa_module
 
 
@@ -27,7 +26,8 @@ def load_supabase():
         content = f.read()
     url = re.search(r'SUPABASE_URL\s*=\s*"([^"]+)"', content).group(1)
     key = re.search(r'SUPABASE_KEY\s*=\s*"([^"]+)"', content).group(1)
-    return create_client(url, key)
+    from supabase_http import create_http_client
+    return create_http_client(url, key)
 
 
 def main():

@@ -449,6 +449,15 @@ def sync_exporta_to_ftp_and_supabase(config):
             ftp = connect_ftp(config)
             with open(path_clientes, "rb") as f_up:
                 ftp.storbinary("STOR CLIENTESPA.DBI", f_up)
+            # Subir sidecar memo si existe (campo MEMO en el DBI)
+            base_cli, _ = os.path.splitext(path_clientes)
+            for ext in (".FPT", ".fpt", ".DBT", ".dbt"):
+                sidecar = base_cli + ext
+                if os.path.exists(sidecar):
+                    remote_name = "CLIENTESPA" + ext
+                    with open(sidecar, "rb") as f_memo:
+                        ftp.storbinary(f"STOR {remote_name}", f_memo)
+                    logger.info(f"Subido {remote_name} al FTP.")
             logger.info("Subido CLIENTESPA.DBI al FTP.")
             
             # Procesar datos
@@ -458,6 +467,8 @@ def sync_exporta_to_ftp_and_supabase(config):
                 import_clientespa_to_supabase, scan_clientespa_metadata = import_clientespa_module()
                 max_codigo, vendedores = scan_clientespa_metadata(path_clientes)
                 presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
+                if presea_stats.get("error_apertura"):
+                    raise RuntimeError(presea_stats["error_apertura"])
                 log_exporta(
                     f"CLIENTESPA → Supabase: nuevos={presea_stats.get('importados', 0)} "
                     f"actualizados={presea_stats.get('actualizados', 0)} "

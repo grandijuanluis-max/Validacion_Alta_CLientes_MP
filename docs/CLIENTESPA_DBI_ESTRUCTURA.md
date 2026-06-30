@@ -18,35 +18,32 @@ Procesado diariamente por `windows_sync.exe` → FTP → Supabase (`clientes_pen
 
 ---
 
-## Esquema de campos (CLIENTESPA.DBI / Clientes_web.dbi)
+## Esquema de campos (CLIENTESPA.DBI — export real Presea)
 
-| Campo | Tipo dBASE | Longitud | Obligatorio | Mapeo Supabase |
-|-------|------------|----------|-------------|----------------|
-| CODIGO | N | 6,0 | Sí | `codigo` |
-| NOMBRE | C | 30 | Sí | `nombre` |
-| N_FANTASIA | C | 30 | No | `n_fantasia` |
-| CUIT | N | 12,0 | Sí | `cuit` (formato XX-XXXXXXXX-X) |
-| DOMICILIO | C | 50 | Sí | `domicilio_f` |
-| LOCALIDAD | C | 35 | Sí | `localidad` |
-| C_POSTAL | C | 50 | Sí | `c_postal` |
-| PROVINCIA | C | 25 | Sí | `provincia` |
-| PAIS | C | 20 | No | `pais` (default ARGENTINA) |
-| CONTACTO | C | 30 | No | `contacto` |
-| TELEFONO | C | 40 | No | `telefono` |
-| RUBRO | C | 30 | No | `giro_comercial` |
-| TIPO_RESP | N | 5,1 | Sí | `tipo_resp` (1.0=RI, 3.0=Mono, etc.) |
-| TIPO_DOC | N | 2,0 | Sí | `tipo_doc` (default 80) |
-| CUIT_S1 | N | 12,0 | No | `cuit_socio1` |
-| CUIT_S2 | N | 12,0 | No | `cuit_socio2` |
-| TRANSPORTE | N | 2,0 | Sí | Fijo: 1 |
-| CONDICION | N | 2,0 | Sí | Fijo: 1 |
-| CATEGORIA | C | 10 | Sí | Fijo: CLI_GRAL |
-| LISTAPRE | C | 10 | Sí | Fijo: LISTA_UNIC |
-| VENDEDOR | N | 6,0 | Sí | `vendedor` |
-| MEMO | M | memo | No | `documento` (observaciones) |
+| Campo | Tipo dBASE | Mapeo Supabase |
+|-------|------------|----------------|
+| CODIGO | N(15,0) | `codigo` (< 40000) |
+| NOMBRE | C(30) | `nombre` |
+| N_FANTASIA | C(30) | `n_fantasia` |
+| CUIT | N(15,0) | `cuit` |
+| DOMICILIO | C(50) | `domicilio_f` |
+| LOCALIDAD | C(35) | `localidad` |
+| C_POSTAL | C(5) | `c_postal` |
+| PROVINCIA | C(25) | `provincia` |
+| PAIS | C(20) | `pais` |
+| CONTACTO | C(30) | `contacto` |
+| TELEFONO | C(40) | `telefono` |
+| RUBRO | C(30) | `giro_comercial` |
+| TIPO_RESP | N(5,1) | `tipo_resp` |
+| TIPO_DOC | N(2,0) | `tipo_doc` |
+| TRANSPORTE | N(15,0) | (no se importa) |
+| CATEGORIA | C(10) | (no se importa) |
+| VENDEDOR | N(15,0) | `vendedor` |
+| MEMO | M (memo) | `documento` — requiere `.FPT` |
 
-**Formato técnico:** dBASE III/IV (`dbf_type='fp'`), codepage `cp1252`.  
-**Archivo memo:** `CLIENTESPA.FPT` (campo MEMO).
+**Importante:** el export Presea **no incluye** CUIT_S1, CUIT_S2, CONDICION ni LISTAPRE (sí existen en `Clientes_web.dbi` de la app).
+
+**Archivo memo:** descargar también `CLIENTESPA.FPT` desde FTP, o el importador crea un sidecar vacío automáticamente.
 
 ---
 

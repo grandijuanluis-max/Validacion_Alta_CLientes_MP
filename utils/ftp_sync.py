@@ -91,22 +91,31 @@ def update_metadata(update_dict):
         logger.error(f"Error escribiendo metadatos: {e}")
 
 def get_supabase_client():
-    """Inicializa y retorna el cliente de Supabase usando credenciales cargadas."""
+    """Inicializa cliente Supabase (supabase-py o fallback REST)."""
     try:
         from modulos.db import supabase
         if supabase is not None:
             return supabase
     except Exception:
         pass
-    
-    # Si no se puede importar de modulos.db (fuera de Streamlit), crearlo aquí
+
     secrets = load_secrets()
     url = secrets.get("SUPABASE_URL")
     key = secrets.get("SUPABASE_KEY")
-    if url and key:
+    if not url or not key:
+        return None
+
+    try:
         from supabase import create_client
         return create_client(url, key)
-    return None
+    except Exception as e:
+        logger.warning("supabase-py no disponible (%s), usando cliente REST.", e)
+        try:
+            from supabase_http import create_http_client
+            return create_http_client(url, key)
+        except Exception as e2:
+            logger.error("No se pudo crear cliente Supabase: %s", e2)
+            return None
 
 def resolve_ftp_host(host):
     """
@@ -239,6 +248,38 @@ def upload_exports():
         })
         return False, error_msg
 
+def _download_ftp_file(ftp, ftp_files, ftp_files_lower, name, dest_path):
+    """Descarga un archivo del FTP si existe (case-insensitive)."""
+    key = name.lower()
+    if key not in ftp_files_lower:
+        return False
+    exact_name = ftp_files[ftp_files_lower.index(key)]
+    logger.info(f"Descargando {exact_name} desde FTP...")
+    with open(dest_path, "wb") as f_out:
+        ftp.retrbinary(f"RETR {exact_name}", f_out.write)
+    logger.info(f"Descargado: {name}")
+    return True
+
+
+def _download_dbi_bundle(ftp, ftp_files, ftp_files_lower, base_name, data_dir):
+    """
+    Descarga BASE.DBI y sidecars memo (.FPT/.DBT) si están en el FTP.
+    Retorna ruta local del .DBI o None.
+    """
+    dbi_name = f"{base_name}.DBI"
+    dbi_path = os.path.join(data_dir, dbi_name)
+    if not _download_ftp_file(ftp, ftp_files, ftp_files_lower, dbi_name, dbi_path):
+        return None
+    for ext in (".FPT", ".fpt", ".DBT", ".dbt"):
+        sidecar_name = base_name + ext
+        _download_ftp_file(
+            ftp, ftp_files, ftp_files_lower,
+            sidecar_name, os.path.join(data_dir, sidecar_name),
+        )
+    # Si no vino el memo desde FTP, dbi_clientes creará sidecar vacío al importar
+    return dbi_path
+
+
 def download_and_import():
     """Descarga CLIENTESPA.DBI y CODIGOSMP.DBI desde el FTP y actualiza la base de datos."""
     logger.info("Iniciando descarga e importación de bases de datos desde FTP...")
@@ -248,7 +289,6 @@ def download_and_import():
     user = secrets.get("FTP_USER")
     passwd = secrets.get("FTP_PASS")
     
-    db_files = ["CLIENTESPA.DBI", "CODIGOSMP.DBI"]
     descargados = {}
     
     try:
@@ -257,25 +297,19 @@ def download_and_import():
         ftp.connect(resolved_host, port, timeout=15)
         ftp.login(user, passwd)
         
-        # Obtener lista de archivos en FTP para verificar existencia
         ftp_files = []
         ftp.retrlines("NLST", ftp_files.append)
-        
-        # Filtro de mayúsculas/minúsculas
         ftp_files_lower = [f.lower() for f in ftp_files]
-        
-        for db_file in db_files:
-            if db_file.lower() in ftp_files_lower:
-                # Obtener el nombre exacto con el casing correcto
-                exact_name = ftp_files[ftp_files_lower.index(db_file.lower())]
-                local_path = os.path.join(DATA_DIR, db_file)
-                logger.info(f"Descargando {exact_name} desde FTP...")
-                with open(local_path, "wb") as f_out:
-                    ftp.retrbinary(f"RETR {exact_name}", f_out.write)
-                logger.info(f"Descargado: {db_file}")
-                descargados[db_file] = local_path
-            else:
-                logger.warning(f"Archivo {db_file} no se encontró en el FTP.")
+
+        clientes_path = _download_dbi_bundle(ftp, ftp_files, ftp_files_lower, "CLIENTESPA", DATA_DIR)
+        if clientes_path:
+            descargados["CLIENTESPA.DBI"] = clientes_path
+
+        codigos_path = os.path.join(DATA_DIR, "CODIGOSMP.DBI")
+        if _download_ftp_file(ftp, ftp_files, ftp_files_lower, "CODIGOSMP.DBI", codigos_path):
+            descargados["CODIGOSMP.DBI"] = codigos_path
+        else:
+            logger.warning("Archivo CODIGOSMP.DBI no se encontró en el FTP.")
                 
         ftp.quit()
     except Exception as e:
@@ -318,13 +352,20 @@ def download_and_import():
             import_clientespa_to_supabase, scan_clientespa_metadata = import_clientespa_module()
             max_codigo, vendedores = scan_clientespa_metadata(path_clientes)
             presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
+            if presea_stats.get("error_apertura"):
+                raise RuntimeError(f"No se pudo leer CLIENTESPA.DBI: {presea_stats['error_apertura']}")
             logger.info(
-                "Clientes Presea FTP→Supabase: nuevos=%s actualizados=%s omitidos=%s errores=%s",
+                "Clientes Presea FTP→Supabase: dbf=%s nuevos=%s actualizados=%s omitidos=%s (app=%s) errores=%s",
+                presea_stats.get("total_dbf", 0),
                 presea_stats.get("importados", 0),
                 presea_stats.get("actualizados", 0),
                 presea_stats.get("omitidos", 0),
+                presea_stats.get("omitidos_app", 0),
                 presea_stats.get("errores", 0),
             )
+            update_metadata({
+                "last_presea_import": presea_stats,
+            })
             
             logger.info(f"--> Máximo Código en CLIENTESPA: {max_codigo}")
             logger.info(f"--> Vendedores en CLIENTESPA: {len(vendedores)}")
@@ -360,6 +401,12 @@ def download_and_import():
             
         except Exception as e:
             logger.error(f"Error procesando CLIENTESPA.DBI: {e}")
+            update_metadata({
+                "last_download_time": datetime.datetime.now().isoformat(),
+                "last_download_status": "Error",
+                "last_download_error": f"CLIENTESPA: {e}",
+            })
+            return False, f"Error importando CLIENTESPA.DBI: {e}"
             
     # --- PROCESAR CODIGOSMP.DBI ---
     if "CODIGOSMP.DBI" in descargados:

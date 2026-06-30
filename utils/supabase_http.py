@@ -1,0 +1,110 @@
+"""Cliente Supabase vía REST (urllib) — fallback cuando supabase-py falla por httpx."""
+
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Optional
+
+
+class _Result:
+    def __init__(self, data: list):
+        self.data = data
+
+
+class _TableQuery:
+    def __init__(self, client: "SupabaseHttpClient", table: str):
+        self._client = client
+        self._table = table
+        self._cols = "*"
+        self._filters: list[str] = []
+        self._range: Optional[tuple[int, int]] = None
+        self._limit: Optional[int] = None
+        self._insert_data: Any = None
+        self._update_data: Any = None
+
+    def select(self, cols: str = "*"):
+        self._cols = cols
+        return self
+
+    def eq(self, col: str, val: Any):
+        self._filters.append(f"{col}=eq.{urllib.parse.quote(str(val))}")
+        return self
+
+    def lt(self, col: str, val: Any):
+        self._filters.append(f"{col}=lt.{val}")
+        return self
+
+    def limit(self, n: int):
+        self._limit = n
+        return self
+
+    def range(self, start: int, end: int):
+        self._range = (start, end)
+        return self
+
+    def insert(self, data: Any):
+        self._insert_data = data
+        return self
+
+    def update(self, data: dict):
+        self._update_data = data
+        return self
+
+    def execute(self) -> _Result:
+        extra_headers = {}
+        if self._range is not None:
+            start, end = self._range
+            extra_headers["Range-Unit"] = "items"
+            extra_headers["Range"] = f"{start}-{end}"
+        if self._insert_data is not None:
+            return self._client._request("POST", self._table, body=self._insert_data, extra_headers=extra_headers)
+        if self._update_data is not None:
+            qs = self._build_qs()
+            return self._client._request("PATCH", self._table, qs=qs, body=self._update_data, extra_headers=extra_headers)
+        qs = self._build_qs()
+        return self._client._request("GET", self._table, qs=qs, extra_headers=extra_headers)
+
+    def _build_qs(self) -> str:
+        parts = [f"select={urllib.parse.quote(self._cols, safe='*,()')}"]
+        parts.extend(self._filters)
+        if self._limit is not None:
+            parts.append(f"limit={self._limit}")
+        return "&".join(parts)
+
+
+class SupabaseHttpClient:
+    def __init__(self, url: str, key: str):
+        self.url = url.rstrip("/")
+        self.key = key
+
+    def table(self, name: str) -> _TableQuery:
+        return _TableQuery(self, name)
+
+    def _request(self, method: str, table: str, qs: str = "", body: Any = None, extra_headers: Optional[dict] = None) -> _Result:
+        url = f"{self.url}/rest/v1/{table}"
+        if qs:
+            url += "?" + qs
+        headers = {
+            "apikey": self.key,
+            "Authorization": f"Bearer {self.key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+        if extra_headers:
+            headers.update(extra_headers)
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                raw = resp.read().decode()
+                return _Result(json.loads(raw) if raw else [])
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode()
+            raise RuntimeError(err_body) from e
+
+
+def create_http_client(url: str, key: str) -> SupabaseHttpClient:
+    return SupabaseHttpClient(url, key)

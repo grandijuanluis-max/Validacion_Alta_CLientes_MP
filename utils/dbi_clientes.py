@@ -10,6 +10,7 @@ Códigos >= 40000 → altas desde la aplicación web (se omiten en este import)
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 import dbf
@@ -24,6 +25,7 @@ CLIENTESPA_SCHEMA = (
 )
 
 PRESEA_CODIGO_MAX = 39999
+BATCH_SIZE = 100
 
 # Columnas mínimas para insert si falla el payload completo
 MINIMAL_INSERT_COLS = (
@@ -38,6 +40,44 @@ OPTIONAL_COLS = (
     "cuit_socio1", "cuit_socio2", "tipo_resp", "tipo_doc",
     "domicilio_e", "contacto", "telefono", "giro_comercial",
 )
+
+
+def ensure_memo_sidecar(dbf_path: str) -> None:
+    """
+    CLIENTESPA.DBI usa campo MEMO → requiere .FPT/.DBT.
+    Si solo se descargó el .DBI desde FTP, crear sidecar vacío para poder leer.
+    """
+    base, _ = os.path.splitext(dbf_path)
+    for ext in (".fpt", ".FPT", ".dbt", ".DBT"):
+        sidecar = base + ext
+        if os.path.exists(sidecar):
+            continue
+        try:
+            with open(sidecar, "wb") as f:
+                if ext.lower() == ".dbt":
+                    f.write(b"\x01\x00\x00\x00" + b"\x00" * 508)
+                else:
+                    f.write(b"\x00\x00\x00\x01\x00\x00\x00\x40" + b"\x00" * 504)
+        except OSError:
+            pass
+
+
+def _open_clientespa_table(path_dbi: str):
+    """Abre CLIENTESPA.DBI con sidecar memo y lectura segura."""
+    ensure_memo_sidecar(path_dbi)
+    table = dbf.Table(path_dbi, codepage="cp1252")
+    table.open()
+    if table._meta.memo:
+        _orig = table._meta.memo.get_memo
+
+        def _safe_memo(block):
+            try:
+                return _orig(block)
+            except Exception:
+                return b""
+
+        table._meta.memo.get_memo = _safe_memo
+    return table
 
 
 def _s(val) -> str:
@@ -73,29 +113,40 @@ def format_cuit(val, codigo: int = 0) -> str:
     return f"00-{str(codigo).zfill(8)}-0"
 
 
+def _field(rec, name: str, default=None):
+    """Lee campo DBF tolerante a columnas ausentes en distintas versiones de Presea."""
+    try:
+        return getattr(rec, name)
+    except Exception:
+        return default
+
+
 def record_to_cliente_dict(rec) -> tuple[Optional[dict], Optional[str]]:
     """
     Convierte registro DBF → dict para clientes_pendientes.
     Retorna (dict, None) o (None, motivo_omision).
+
+    Nota: CLIENTESPA.DBI de Presea puede no incluir CUIT_S1/CUIT_S2/CONDICION/LISTAPRE
+    (el export real tiene 18 campos vs 22 del Clientes_web.dbi de la app).
     """
-    codigo = _i(rec.CODIGO)
+    codigo = _i(_field(rec, "CODIGO"))
     if codigo <= 0:
         return None, "codigo_invalido"
     if codigo > PRESEA_CODIGO_MAX:
         return None, "codigo_app"
 
-    cuit = format_cuit(rec.CUIT, codigo)
-    domicilio_f = _s(rec.DOMICILIO)
-    localidad = _s(rec.LOCALIDAD)
-    provincia = _s(rec.PROVINCIA)
-    c_postal = _s(rec.C_POSTAL)
-    pais = _s(rec.PAIS) or "ARGENTINA"
+    cuit = format_cuit(_field(rec, "CUIT"), codigo)
+    domicilio_f = _s(_field(rec, "DOMICILIO"))
+    localidad = _s(_field(rec, "LOCALIDAD"))
+    provincia = _s(_field(rec, "PROVINCIA"))
+    c_postal = _s(_field(rec, "C_POSTAL"))
+    pais = _s(_field(rec, "PAIS")) or "ARGENTINA"
 
-    cuit_s1 = _i(rec.CUIT_S1)
-    cuit_s2 = _i(rec.CUIT_S2)
-    memo = _s(rec.MEMO) if hasattr(rec, "MEMO") else ""
+    cuit_s1 = _i(_field(rec, "CUIT_S1", 0) or _field(rec, "CUIT_S01", 0))
+    cuit_s2 = _i(_field(rec, "CUIT_S2", 0) or _field(rec, "CUIT_S02", 0))
+    memo = _s(_field(rec, "MEMO", ""))
 
-    nombre = _s(rec.NOMBRE) or _s(rec.N_FANTASIA) or f"CLIENTE {codigo}"
+    nombre = _s(_field(rec, "NOMBRE")) or _s(_field(rec, "N_FANTASIA")) or f"CLIENTE {codigo}"
 
     return {
         "codigo": codigo,
@@ -103,32 +154,56 @@ def record_to_cliente_dict(rec) -> tuple[Optional[dict], Optional[str]]:
         "estado": "Pendiente",
         "cuit": cuit,
         "nombre": nombre,
-        "n_fantasia": _s(rec.N_FANTASIA) or nombre,
+        "n_fantasia": _s(_field(rec, "N_FANTASIA")) or nombre,
         "domicilio_f": domicilio_f,
         "domicilio_e": domicilio_f,
         "localidad": localidad,
         "provincia": provincia,
         "c_postal": c_postal,
-        "cp_ent": c_postal[:5] if c_postal else "",
+        "cp_ent": c_postal[:5].strip() if c_postal else "",
         "local_ent": localidad,
         "prov_ent": provincia,
         "pais": pais,
-        "contacto": _s(rec.CONTACTO),
-        "telefono": _s(rec.TELEFONO),
-        "giro_comercial": _s(rec.RUBRO),
-        "tipo_resp": str(_f(rec.TIPO_RESP)) if _f(rec.TIPO_RESP) else "1.0",
-        "tipo_doc": str(_i(rec.TIPO_DOC) or 80),
+        "contacto": _s(_field(rec, "CONTACTO")),
+        "telefono": _s(_field(rec, "TELEFONO")),
+        "giro_comercial": _s(_field(rec, "RUBRO")),
+        "tipo_resp": str(_f(_field(rec, "TIPO_RESP"))) if _f(_field(rec, "TIPO_RESP")) else "1.0",
+        "tipo_doc": str(_i(_field(rec, "TIPO_DOC")) or 80),
         "cuit_socio1": str(cuit_s1) if cuit_s1 else None,
         "cuit_socio2": str(cuit_s2) if cuit_s2 else None,
-        "vendedor": str(_i(rec.VENDEDOR)) if _i(rec.VENDEDOR) else None,
+        "vendedor": str(_i(_field(rec, "VENDEDOR"))) if _i(_field(rec, "VENDEDOR")) else None,
         "documento": memo or None,
         "validado_arca": False,
         "validado_nosis": False,
     }, None
 
 
-def _load_existing_presea(supabase, log) -> dict[int, str]:
+def _schema_supports_presea(supabase, log) -> bool:
+    try:
+        supabase.table("clientes_pendientes").select("origen,codigo").limit(1).execute()
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        if "origen" in err or "codigo" in err:
+            log.warning(
+                "Columnas origen/codigo ausentes en Supabase. "
+                "Ejecute supabase_migration_presea_clientes.sql. Importando sin esas columnas."
+            )
+            return False
+        raise
+
+
+def _adapt_item_for_schema(item: dict, supports_presea: bool) -> dict:
+    if supports_presea:
+        return item
+    skip = {"origen", "codigo", "validado_arca", "validado_nosis", "vendedor"}
+    return {k: v for k, v in item.items() if k not in skip}
+
+
+def _load_existing_presea(supabase, log, supports_presea: bool = True) -> dict[int, str]:
     """codigo → id UUID de clientes Presea ya en Supabase."""
+    if not supports_presea:
+        return {}
     existing: dict[int, str] = {}
     try:
         offset = 0
@@ -177,13 +252,12 @@ def _insert_one(supabase, item: dict, log) -> bool:
         return True
     except Exception as e1:
         err1 = str(e1)
-        # Quitar columnas opcionales y reintentar
         reduced = {k: v for k, v in payload.items() if k not in OPTIONAL_COLS}
         try:
             supabase.table("clientes_pendientes").insert(reduced).execute()
             log.warning("Insert OK (payload reducido) codigo=%s: %s", item.get("codigo"), err1[:120])
             return True
-        except Exception as e2:
+        except Exception:
             minimal = {k: reduced[k] for k in MINIMAL_INSERT_COLS if k in reduced}
             try:
                 supabase.table("clientes_pendientes").insert(minimal).execute()
@@ -195,6 +269,25 @@ def _insert_one(supabase, item: dict, log) -> bool:
                     item.get("codigo"), item.get("cuit"), e3,
                 )
                 return False
+
+
+def _insert_batch(supabase, items: list[dict], log) -> tuple[int, int]:
+    """Inserta lote; en fallo reintenta fila a fila. Retorna (ok, fail)."""
+    if not items:
+        return 0, 0
+    payload = [_clean_payload(it) for it in items]
+    try:
+        supabase.table("clientes_pendientes").insert(payload).execute()
+        return len(payload), 0
+    except Exception as e_batch:
+        log.warning("Lote de %s falló (%s), reintentando individual...", len(items), str(e_batch)[:120])
+        ok = fail = 0
+        for item in items:
+            if _insert_one(supabase, item, log):
+                ok += 1
+            else:
+                fail += 1
+        return ok, fail
 
 
 def _update_one(supabase, row_id: str, item: dict, log) -> bool:
@@ -227,23 +320,22 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
         "errores": 0,
     }
 
-    existing_by_codigo = _load_existing_presea(supabase, log)
+    supports_presea = _schema_supports_presea(supabase, log)
+
+    existing_by_codigo = _load_existing_presea(supabase, log, supports_presea)
     batch_insert: list[dict] = []
     batch_update: list[tuple[str, dict]] = []
 
-    with dbf.Table(path_dbi, codepage="cp1252") as table:
-        table.open()
-        if table._meta.memo:
-            _orig = table._meta.memo.get_memo
+    try:
+        table = _open_clientespa_table(path_dbi)
+    except Exception as e:
+        log.error("No se pudo abrir CLIENTESPA.DBI (%s): %s", path_dbi, e)
+        stats["error_apertura"] = str(e)
+        return stats
 
-            def _safe_memo(block):
-                try:
-                    return _orig(block)
-                except Exception:
-                    return b""
+    stats["schema_presea"] = supports_presea
 
-            table._meta.memo.get_memo = _safe_memo
-
+    try:
         for rec in table:
             stats["total_dbf"] += 1
             item, motivo = record_to_cliente_dict(rec)
@@ -256,10 +348,13 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
                 continue
 
             codigo = item["codigo"]
+            item = _adapt_item_for_schema(item, supports_presea)
             if codigo in existing_by_codigo:
                 batch_update.append((existing_by_codigo[codigo], item))
             else:
                 batch_insert.append(item)
+    finally:
+        table.close()
 
     for row_id, item in batch_update:
         if _update_one(supabase, row_id, item, log):
@@ -267,11 +362,13 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
         else:
             stats["errores"] += 1
 
-    for item in batch_insert:
-        if _insert_one(supabase, item, log):
-            stats["importados"] += 1
-        else:
-            stats["errores"] += 1
+    for i in range(0, len(batch_insert), BATCH_SIZE):
+        chunk = batch_insert[i : i + BATCH_SIZE]
+        ok, fail = _insert_batch(supabase, chunk, log)
+        stats["importados"] += ok
+        stats["errores"] += fail
+        if ok and (i + BATCH_SIZE) % 500 == 0:
+            log.info("Progreso insert Presea: %s/%s", min(i + BATCH_SIZE, len(batch_insert)), len(batch_insert))
 
     stats["importados_total"] = stats["importados"] + stats["actualizados"]
     log.info(
@@ -285,19 +382,21 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
 def scan_clientespa_metadata(path_dbi: str) -> tuple[int, set]:
     max_codigo = 0
     vendedores = set()
-    with dbf.Table(path_dbi, codepage="cp1252") as table:
-        table.open()
+    table = _open_clientespa_table(path_dbi)
+    try:
         for rec in table:
             try:
-                codigo = int(rec.CODIGO)
+                codigo = int(_field(rec, "CODIGO"))
                 if codigo > max_codigo:
                     max_codigo = codigo
             except Exception:
                 pass
             try:
-                vend = int(rec.VENDEDOR)
+                vend = int(_field(rec, "VENDEDOR"))
                 if vend > 0:
                     vendedores.add(vend)
             except Exception:
                 pass
+    finally:
+        table.close()
     return max_codigo, vendedores

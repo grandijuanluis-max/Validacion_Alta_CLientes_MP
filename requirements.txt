@@ -1,5 +1,6 @@
 streamlit>=1.32,<2
 supabase>=2.4,<3
+httpx>=0.24,<0.28
 pandas>=2.0,<3
 numpy>=1.26,<3
 dbf>=0.99
