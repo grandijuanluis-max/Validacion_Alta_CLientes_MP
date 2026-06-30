@@ -20,3 +20,9 @@ WHERE origen IS NULL;
 
 COMMENT ON COLUMN public.clientes_pendientes.codigo IS 'Código Presea. <40000 = ERP, >=40000 = alta web';
 COMMENT ON COLUMN public.clientes_pendientes.origen IS 'app | presea';
+
+-- Ampliar CHECK de estado si en producción solo permite Pendiente/Validado/Exportado
+ALTER TABLE public.clientes_pendientes DROP CONSTRAINT IF EXISTS clientes_pendientes_estado_check;
+ALTER TABLE public.clientes_pendientes
+    ADD CONSTRAINT clientes_pendientes_estado_check
+    CHECK (estado IN ('Pendiente', 'Modificado', 'A Exportar', 'Validado', 'Exportado'));

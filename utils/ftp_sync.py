@@ -13,7 +13,9 @@ import dbf
 # Configurar ruta absoluta dinámica para poder importar la conexión a Supabase de la app
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", BASE_DIR)
-sys.path.append(PROJECT_ROOT)
+UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, UTILS_DIR)
 
 # Carpeta de datos local
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
@@ -312,12 +314,16 @@ def download_and_import():
         path_clientes = descargados["CLIENTESPA.DBI"]
         logger.info(f"Procesando {path_clientes}...")
         try:
-            from dbi_clientes import scan_clientespa_metadata, import_clientespa_to_supabase
+            from dbi_clientes_loader import import_clientespa_module
+            import_clientespa_to_supabase, scan_clientespa_metadata = import_clientespa_module()
             max_codigo, vendedores = scan_clientespa_metadata(path_clientes)
             presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
             logger.info(
-                "Clientes Presea: importados=%s omitidos=%s",
-                presea_stats["importados"], presea_stats["omitidos"],
+                "Clientes Presea FTP→Supabase: nuevos=%s actualizados=%s omitidos=%s errores=%s",
+                presea_stats.get("importados", 0),
+                presea_stats.get("actualizados", 0),
+                presea_stats.get("omitidos", 0),
+                presea_stats.get("errores", 0),
             )
             
             logger.info(f"--> Máximo Código en CLIENTESPA: {max_codigo}")

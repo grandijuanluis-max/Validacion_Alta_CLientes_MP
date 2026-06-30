@@ -46,6 +46,10 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Asegurar imports locales (dbi_clientes, ventas_importer)
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 CONFIG_FILE = os.path.join(BASE_DIR, "windows_sync_config.json")
 LOG_FILE = os.path.join(BASE_DIR, "windows_sync.log")
 
@@ -450,27 +454,43 @@ def sync_exporta_to_ftp_and_supabase(config):
             # Procesar datos
             logger.info("Procesando CLIENTESPA.DBI para Supabase...")
             try:
-                from dbi_clientes import scan_clientespa_metadata, import_clientespa_to_supabase
+                from dbi_clientes_loader import import_clientespa_module
+                import_clientespa_to_supabase, scan_clientespa_metadata = import_clientespa_module()
                 max_codigo, vendedores = scan_clientespa_metadata(path_clientes)
                 presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
+                log_exporta(
+                    f"CLIENTESPA → Supabase: nuevos={presea_stats.get('importados', 0)} "
+                    f"actualizados={presea_stats.get('actualizados', 0)} "
+                    f"omitidos={presea_stats.get('omitidos', 0)} errores={presea_stats.get('errores', 0)}",
+                    config,
+                )
                 logger.info(
-                    "Clientes Presea importados: %s (omitidos=%s, errores=%s)",
-                    presea_stats["importados"], presea_stats["omitidos"], presea_stats["errores"],
+                    "Clientes Presea: nuevos=%s actualizados=%s omitidos=%s (app=%s) errores=%s",
+                    presea_stats.get("importados", 0),
+                    presea_stats.get("actualizados", 0),
+                    presea_stats.get("omitidos", 0),
+                    presea_stats.get("omitidos_app", 0),
+                    presea_stats.get("errores", 0),
                 )
             except Exception as presea_err:
                 logger.error(f"Error importando clientes Presea: {presea_err}")
+                log_exporta(f"ERROR import CLIENTESPA: {presea_err}", config)
                 max_codigo, vendedores = 0, set()
                 with dbf.Table(path_clientes, codepage='cp1252') as table:
                     table.open()
                     for rec in table:
                         try:
                             codigo = int(rec.CODIGO)
-                            if codigo > max_codigo: max_codigo = codigo
-                        except Exception: pass
+                            if codigo > max_codigo:
+                                max_codigo = codigo
+                        except Exception:
+                            pass
                         try:
                             vend = int(rec.VENDEDOR)
-                            if vend > 0: vendedores.add(vend)
-                        except Exception: pass
+                            if vend > 0:
+                                vendedores.add(vend)
+                        except Exception:
+                            pass
             
             # Actualizar secuencia_codigo
             logger.info(f"Max codigo detectado: {max_codigo}. Actualizando secuencia en la DB...")
