@@ -117,6 +117,9 @@ python scripts/verify_ventas_sync.py /ruta/a/ventas.dbi
 | `utils/windows_sync.py` | Sync Windows: clientes + ventas |
 | `utils/ventas_importer.py` | Import DBI → Supabase (compartido) |
 | `modulos/ui_gestion.py` | Tableros y carga histórica |
+| `modulos/ui_presea.py` | Validación clientes altas Presea (<40000) |
+| `utils/dbi_clientes.py` | Import CLIENTESPA.DBI → Supabase |
+| `docs/CLIENTESPA_DBI_ESTRUCTURA.md` | Especificación DBI Presea |
 | `supabase_schema.sql` | Esquema inicial |
 | `supabase_fix_ventas_constraint.sql` | Migración constraint 8 campos |
 | `.streamlit/secrets.toml.example` | Plantilla de secrets |

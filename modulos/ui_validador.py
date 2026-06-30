@@ -108,9 +108,10 @@ def render_validador_dashboard():
         return
 
     # Crear pestañas para organizar la UI
-    tab_pendientes, tab_rechazados = st.tabs([
+    tab_pendientes, tab_rechazados, tab_presea = st.tabs([
         "📋 Clientes Pendientes",
-        "🛑 Clientes Rechazados"
+        "🛑 Clientes Rechazados",
+        "🏭 Clientes Altas desde Presea",
     ])
     
     with tab_pendientes:
@@ -118,6 +119,10 @@ def render_validador_dashboard():
         
     with tab_rechazados:
         render_clientes_rechazados()
+
+    with tab_presea:
+        from modulos.ui_presea import render_clientes_presea
+        render_clientes_presea()
 
 
 def render_clientes_pendientes():
@@ -132,6 +137,17 @@ def render_clientes_pendientes():
             return
             
         df = pd.DataFrame(response.data)
+        
+        # Excluir clientes importados desde Presea (van en su propia solapa)
+        if "origen" in df.columns:
+            df = df[df["origen"].fillna("app") != "presea"]
+        if "codigo" in df.columns:
+            codigos = pd.to_numeric(df["codigo"], errors="coerce")
+            df = df[~(codigos.notna() & (codigos < 40000))]
+        
+        if df.empty:
+            st.info("No hay clientes pendientes de validación o para exportar.")
+            return
         
         # Mapear tipo responsable
         df['tipo_resp_desc'] = df['tipo_resp'].apply(lambda x: MAP_TIPO_RESP.get(str(x), str(x) if x else "N/A"))

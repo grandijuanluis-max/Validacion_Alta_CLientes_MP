@@ -449,19 +449,28 @@ def sync_exporta_to_ftp_and_supabase(config):
             
             # Procesar datos
             logger.info("Procesando CLIENTESPA.DBI para Supabase...")
-            max_codigo = 0
-            vendedores = set()
-            with dbf.Table(path_clientes, codepage='cp1252') as table:
-                table.open()
-                for rec in table:
-                    try:
-                        codigo = int(rec.CODIGO)
-                        if codigo > max_codigo: max_codigo = codigo
-                    except Exception: pass
-                    try:
-                        vend = int(rec.VENDEDOR)
-                        if vend > 0: vendedores.add(vend)
-                    except Exception: pass
+            try:
+                from dbi_clientes import scan_clientespa_metadata, import_clientespa_to_supabase
+                max_codigo, vendedores = scan_clientespa_metadata(path_clientes)
+                presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
+                logger.info(
+                    "Clientes Presea importados: %s (omitidos=%s, errores=%s)",
+                    presea_stats["importados"], presea_stats["omitidos"], presea_stats["errores"],
+                )
+            except Exception as presea_err:
+                logger.error(f"Error importando clientes Presea: {presea_err}")
+                max_codigo, vendedores = 0, set()
+                with dbf.Table(path_clientes, codepage='cp1252') as table:
+                    table.open()
+                    for rec in table:
+                        try:
+                            codigo = int(rec.CODIGO)
+                            if codigo > max_codigo: max_codigo = codigo
+                        except Exception: pass
+                        try:
+                            vend = int(rec.VENDEDOR)
+                            if vend > 0: vendedores.add(vend)
+                        except Exception: pass
             
             # Actualizar secuencia_codigo
             logger.info(f"Max codigo detectado: {max_codigo}. Actualizando secuencia en la DB...")

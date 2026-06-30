@@ -40,9 +40,19 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
     table = dbf.Table(ruta_salida, schema_str, dbf_type='fp', codepage='cp1252')
     table.open(mode=dbf.READ_WRITE)
     
-    codigo_actual = numero_inicio_codigo
+    next_app_codigo = numero_inicio_codigo
     
     for index, row in dataframe_clientes.iterrows():
+        raw_cod = row.get('codigo')
+        if raw_cod is not None and str(raw_cod).strip() not in ('', 'nan', 'None'):
+            try:
+                codigo_actual = int(float(raw_cod))
+            except Exception:
+                codigo_actual = next_app_codigo
+                next_app_codigo += 1
+        else:
+            codigo_actual = next_app_codigo
+            next_app_codigo += 1
         # Limpieza de numéricos (CUITs)
         cuit_num = str(row.get('cuit', '0')).replace('-', '').replace(' ', '')
         if not cuit_num.isdigit(): cuit_num = 0
@@ -92,7 +102,6 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
             str(row.get('documento', ''))             # MEMO M (sin límite de 210 caracteres)
         )
         table.append(registro)
-        codigo_actual += 1
         
     table.close()
     
@@ -103,14 +112,24 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
     if os.path.exists(ruta_domicilios):
         os.remove(ruta_domicilios)
         
-    codigo_actual = numero_inicio_codigo
+    next_app_codigo = numero_inicio_codigo
     lineas = []
     for index, row in dataframe_clientes.iterrows():
-        codigo_mask = f"{codigo_actual:06d}-000"
+        raw_cod = row.get('codigo')
+        if raw_cod is not None and str(raw_cod).strip() not in ('', 'nan', 'None'):
+            try:
+                codigo_row = int(float(raw_cod))
+            except Exception:
+                codigo_row = next_app_codigo
+                next_app_codigo += 1
+        else:
+            codigo_row = next_app_codigo
+            next_app_codigo += 1
+        codigo_mask = f"{codigo_row:06d}-000"
         
         linea = (
             format_sdf_field(codigo_mask, 10, is_numeric=False) +
-            format_sdf_field(codigo_actual, 6, is_numeric=True) +
+            format_sdf_field(codigo_row, 6, is_numeric=True) +
             format_sdf_field(row.get('domicilio_e', ''), 30, is_numeric=False) +
             format_sdf_field(row.get('cp_ent', ''), 5, is_numeric=False) +
             format_sdf_field(row.get('local_ent', ''), 35, is_numeric=False) +
@@ -119,10 +138,9 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
             format_sdf_field(row.get('local_ent', ''), 35, is_numeric=False)
         )
         lineas.append(linea)
-        codigo_actual += 1
         
     with open(ruta_domicilios, "w", encoding="cp1252", newline="") as f_sdf:
         for line in lineas:
             f_sdf.write(line + "\r\n")
         
-    return ruta_salida, codigo_actual
+    return ruta_salida, next_app_codigo

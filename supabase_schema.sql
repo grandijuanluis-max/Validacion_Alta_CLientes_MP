@@ -32,6 +32,13 @@ CREATE TABLE public.clientes_pendientes (
     telefono TEXT,
     giro_comercial TEXT, -- Rubro / Ramo
     
+    -- Presea / ERP
+    codigo NUMERIC, -- <40000 Presea, >=40000 app
+    origen TEXT DEFAULT 'app', -- app | presea
+    vendedor TEXT,
+    validado_arca BOOLEAN DEFAULT FALSE,
+    validado_nosis BOOLEAN DEFAULT FALSE,
+    
     -- Control
     creado_por UUID REFERENCES public.usuarios(id),
     exportado_el TIMESTAMP WITH TIME ZONE

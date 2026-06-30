@@ -15,7 +15,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo [*] Compilando windows_sync.py a windows_sync.exe...
-python -m PyInstaller --onefile --clean --hidden-import ventas_importer windows_sync.py
+python -m PyInstaller --onefile --clean --hidden-import ventas_importer --hidden-import dbi_clientes windows_sync.py
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] La compilacion fallo.
     pause

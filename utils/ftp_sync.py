@@ -312,21 +312,13 @@ def download_and_import():
         path_clientes = descargados["CLIENTESPA.DBI"]
         logger.info(f"Procesando {path_clientes}...")
         try:
-            max_codigo = 0
-            vendedores = set()
-            
-            with dbf.Table(path_clientes, codepage='cp1252') as table:
-                table.open()
-                for rec in table:
-                    try:
-                        codigo = int(rec.CODIGO)
-                        if codigo > max_codigo: max_codigo = codigo
-                    except Exception: pass
-                    
-                    try:
-                        vend = int(rec.VENDEDOR)
-                        if vend > 0: vendedores.add(vend)
-                    except Exception: pass
+            from dbi_clientes import scan_clientespa_metadata, import_clientespa_to_supabase
+            max_codigo, vendedores = scan_clientespa_metadata(path_clientes)
+            presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
+            logger.info(
+                "Clientes Presea: importados=%s omitidos=%s",
+                presea_stats["importados"], presea_stats["omitidos"],
+            )
             
             logger.info(f"--> Máximo Código en CLIENTESPA: {max_codigo}")
             logger.info(f"--> Vendedores en CLIENTESPA: {len(vendedores)}")
