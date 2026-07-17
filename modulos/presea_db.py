@@ -8,6 +8,8 @@ MIGRATION_FILE = "supabase_migration_presea_clientes.sql"
 PRESEA_EXTRA_COLS = frozenset({
     "codigo", "origen", "vendedor", "validado_arca", "validado_nosis",
 })
+ESTADOS_ACTIVOS_APP = ("Pendiente", "Modificado", "A Exportar")
+SUPABASE_PAGE_SIZE = 1000
 
 
 def _err_text(err) -> str:
@@ -38,26 +40,79 @@ def migration_sql() -> str:
         )
 
 
+def _fetch_paginated(query) -> list:
+    """Recorre todas las páginas de una consulta Supabase (límite por defecto: 1000 filas)."""
+    rows: list = []
+    offset = 0
+    while True:
+        res = query.range(offset, offset + SUPABASE_PAGE_SIZE - 1).execute()
+        batch = res.data or []
+        rows.extend(batch)
+        if len(batch) < SUPABASE_PAGE_SIZE:
+            break
+        offset += SUPABASE_PAGE_SIZE
+    return rows
+
+
+def fetch_app_clientes(
+    supabase,
+    estados: tuple[str, ...] | list[str] | None = None,
+) -> tuple[list, str | None]:
+    """
+    Clientes dados de alta desde la app (origen=app).
+    Retorna (filas, aviso). aviso: None | 'migration_recommended'
+    """
+    if estados is None:
+        estados = ESTADOS_ACTIVOS_APP
+
+    try:
+        query = (
+            supabase.table("clientes_pendientes")
+            .select("*, usuarios(codigo_vendedor)")
+            .eq("origen", "app")
+            .in_("estado", list(estados))
+            .order("created_at", desc=True)
+        )
+        return _fetch_paginated(query), None
+    except Exception as e:
+        if not _missing_column(e, "origen"):
+            raise
+
+    query = (
+        supabase.table("clientes_pendientes")
+        .select("*, usuarios(codigo_vendedor)")
+        .is_("codigo", "null")
+        .in_("estado", list(estados))
+        .order("created_at", desc=True)
+    )
+    return _fetch_paginated(query), "migration_recommended"
+
+
 def fetch_presea_clientes(supabase) -> tuple[list, str | None]:
     """
     Retorna (filas, aviso).
     aviso: None | 'migration_required' | 'migration_recommended'
     """
     try:
-        res = supabase.table("clientes_pendientes").select("*").eq("origen", "presea").execute()
-        return res.data or [], None
+        query = (
+            supabase.table("clientes_pendientes")
+            .select("*")
+            .eq("origen", "presea")
+            .order("created_at", desc=True)
+        )
+        return _fetch_paginated(query), None
     except Exception as e:
         if not _missing_column(e, "origen"):
             raise
 
     try:
-        res = (
+        query = (
             supabase.table("clientes_pendientes")
             .select("*")
             .lt("codigo", 40000)
-            .execute()
+            .order("created_at", desc=True)
         )
-        return res.data or [], "migration_recommended"
+        return _fetch_paginated(query), "migration_recommended"
     except Exception as e:
         if _missing_column(e, "codigo"):
             return [], "migration_required"

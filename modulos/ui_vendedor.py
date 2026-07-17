@@ -476,7 +476,8 @@ def render_vendedor_dashboard():
                     codigo_resp = st.session_state['afip_data'].get('tipo_resp_codigo', '') if (is_afip and val_tresp) else mapa_resp.get(tresp_sel, "")
                     
                     data = {
-                        "cuit": cuit.upper() if cuit else "",
+                        "cuit": cuit_limpio,
+                        "origen": "app",
                         "nombre": nombre.upper() if nombre else "",
                         "n_fantasia": n_fantasia.upper() if n_fantasia else "",
                         "domicilio_f": domicilio_f.upper() if domicilio_f else "",

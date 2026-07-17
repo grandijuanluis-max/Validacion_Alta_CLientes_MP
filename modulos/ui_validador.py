@@ -3,6 +3,7 @@ import pandas as pd
 from modulos.generador_dbi import generar_archivo_dbi
 from modulos.db import supabase
 from modulos.api_nosis import consultar_y_evaluar_nosis
+from modulos.presea_db import fetch_app_clientes
 from utils.ftp_sync import upload_exports
 
 
@@ -129,25 +130,18 @@ def render_clientes_pendientes():
     st.write("A continuación se listan los clientes cargados por los vendedores que esperan validación o exportación.")
     
     try:
-        # Traer clientes en estados activos ('Pendiente', 'Modificado', 'A Exportar')
-        response = supabase.table('clientes_pendientes').select('*, usuarios(codigo_vendedor)').in_('estado', ['Pendiente', 'Modificado', 'A Exportar']).execute()
-        
-        if not response.data:
+        rows, migration_status = fetch_app_clientes(supabase)
+        if migration_status == "migration_recommended":
+            st.caption(
+                "Mostrando altas web sin columna `origen` (solo registros sin código Presea asignado)."
+            )
+
+        if not rows:
             st.info("No hay clientes pendientes de validación o para exportar.")
             return
             
-        df = pd.DataFrame(response.data)
-        
-        # Excluir clientes importados desde Presea (van en su propia solapa)
-        if "origen" in df.columns:
-            df = df[df["origen"].fillna("app") != "presea"]
-        if "codigo" in df.columns:
-            codigos = pd.to_numeric(df["codigo"], errors="coerce")
-            df = df[~(codigos.notna() & (codigos < 40000))]
-        
-        if df.empty:
-            st.info("No hay clientes pendientes de validación o para exportar.")
-            return
+        df = pd.DataFrame(rows)
+        st.caption(f"{len(df)} cliente(s) cargados desde la aplicación en cola de validación/exportación.")
         
         # Mapear tipo responsable
         df['tipo_resp_desc'] = df['tipo_resp'].apply(lambda x: MAP_TIPO_RESP.get(str(x), str(x) if x else "N/A"))
