@@ -4,6 +4,7 @@ import requests
 import streamlit as st
 from datetime import datetime, timezone, timedelta
 from modulos.db import supabase
+from modulos.reporte_pdf import normalizar_payload_nosis
 
 def _simular_payload_nosis(cuit: str) -> dict:
     """Genera el payload crudo simulado de Nosis con todas las variables extendidas."""
@@ -445,7 +446,7 @@ def consultar_y_evaluar_nosis(cuit: str, user_id: str) -> dict:
                 fecha_consulta = datetime.fromisoformat(fecha_consulta_str.replace("Z", "+00:00"))
                 limite_30_dias = datetime.now(timezone.utc) - timedelta(days=30)
                 if fecha_consulta > limite_30_dias:
-                    payload_crudo = registro['payload']
+                    payload_crudo = normalizar_payload_nosis(registro['payload'])
                     en_cache = True
             except:
                 pass
@@ -486,6 +487,7 @@ def consultar_y_evaluar_nosis(cuit: str, user_id: str) -> dict:
                 print(f"Error guardando caché: {cache_err}")
                 
         # 3. Procesamiento en el Motor de Reglas
+        payload_crudo = normalizar_payload_nosis(payload_crudo)
         resultado = _evaluar_matriz_decision(payload_crudo)
         resultado['origen'] = origen_datos
         

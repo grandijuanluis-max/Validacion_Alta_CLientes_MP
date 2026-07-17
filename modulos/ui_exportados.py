@@ -3,6 +3,7 @@ import pandas as pd
 from modulos.db import supabase
 from modulos.ui_validador import MAP_TIPO_RESP
 from modulos.api_nosis import consultar_y_evaluar_nosis
+from modulos.reporte_pdf import render_nosis_pdf_download, build_nosis_pdf_bytes
 
 @st.dialog("🛡️ Resumen Nosis de Socio")
 def mostrar_modal_socio(cuit_socio, rol_socio):
@@ -66,20 +67,16 @@ def mostrar_modal_socio(cuit_socio, rol_socio):
         
         # Botón de Descarga del Reporte PDF para el Socio
         st.markdown("##### 📄 Exportación Oficial")
-        try:
-            from modulos.reporte_pdf import generar_pdf_reporte_nosis
-            path_pdf = generar_pdf_reporte_nosis(payload, cuit_socio, dictamen, semaforos, nosis_data.get('explicacion', ''))
-            with open(path_pdf, "rb") as pdf_file:
-                st.download_button(
-                    label="📥 Descargar Resumen Socio PDF",
-                    data=pdf_file,
-                    file_name=f"Resumen_Socio_{cuit_socio}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    key=f"dl_pdf_socio_exp_dialog_{cuit_socio}"
-                )
-        except Exception as pdf_err:
-            st.caption(f"Error generando PDF del socio: {pdf_err}")
+        render_nosis_pdf_download(
+            payload,
+            cuit_socio,
+            dictamen,
+            semaforos,
+            nosis_data.get("explicacion", ""),
+            label="Generar y descargar Resumen Socio PDF",
+            file_name=f"Resumen_Socio_{cuit_socio}.pdf",
+            key=f"modal_socio_exp_{cuit_socio}",
+        )
 
 def render_exportados_dashboard():
     st.header("📦 Clientes Exportados")
@@ -217,21 +214,16 @@ def render_exportados_dashboard():
                 
                 # Botón de Descarga del Reporte PDF
                 st.markdown("##### 📄 Exportación de Reporte Oficial")
-                try:
-                    from modulos.reporte_pdf import generar_pdf_reporte_nosis
-                    path_pdf = generar_pdf_reporte_nosis(payload, cuit_seleccionado, dictamen, semaforos, nosis_data.get('explicacion', ''))
-                    with open(path_pdf, "rb") as pdf_file:
-                        st.download_button(
-                            label="📥 Descargar Resumen PDF",
-                            data=pdf_file,
-                            file_name=f"Resumen_Riesgo_{cuit_seleccionado}.pdf",
-                            mime="application/pdf",
-                            use_container_width=True,
-                            type="secondary",
-                            key=f"dl_pdf_exp_{cuit_seleccionado}"
-                        )
-                except Exception as pdf_err:
-                    st.caption(f"No se pudo generar el resumen PDF automáticamente: {pdf_err}")
+                render_nosis_pdf_download(
+                    payload,
+                    cuit_seleccionado,
+                    dictamen,
+                    semaforos,
+                    nosis_data.get("explicacion", ""),
+                    label="Generar y descargar Resumen PDF",
+                    file_name=f"Resumen_Riesgo_{cuit_seleccionado}.pdf",
+                    key=f"exportados_{cuit_seleccionado}",
+                )
                 
                 with st.expander("ℹ️ ¿Cómo leer estas mediciones? (Glosario Nosis)"):
                     st.markdown("""
@@ -301,33 +293,33 @@ def render_exportados_dashboard():
                         if c1.button("🔍 Análisis Nosis", key=f"btn_socio1_analisis_exp_{cuit_s1_digits}", use_container_width=True):
                             mostrar_modal_socio(cuit_s1_digits, "Socio 1")
                             
-                        # Botón de Descarga inteligente para Socio 1
-                        pdf_key_s1 = f"pdf_path_socio_exp_{cuit_s1_digits}"
-                        import os
-                        if pdf_key_s1 in st.session_state and os.path.exists(st.session_state[pdf_key_s1]):
-                            with open(st.session_state[pdf_key_s1], "rb") as f:
-                                c2.download_button(
-                                    label="📥 descarga de resumen Cuit socio",
-                                    data=f,
-                                    file_name=f"Resumen_Socio_{cuit_s1_digits}.pdf",
-                                    mime="application/pdf",
-                                    key=f"dl_socio1_ready_exp_{cuit_s1_digits}",
-                                    use_container_width=True
-                                )
+                        pdf_key_s1 = f"pdf_bytes_socio_exp_{cuit_s1_digits}"
+                        if pdf_key_s1 in st.session_state:
+                            c2.download_button(
+                                label="Descargar resumen CUIT socio",
+                                data=st.session_state[pdf_key_s1],
+                                file_name=f"Resumen_Socio_{cuit_s1_digits}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_socio1_ready_exp_{cuit_s1_digits}",
+                                use_container_width=True,
+                            )
                         else:
-                            if c2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio1_gen_exp_{cuit_s1_digits}", use_container_width=True):
+                            if c2.button("Generar resumen CUIT socio", key=f"dl_socio1_gen_exp_{cuit_s1_digits}", use_container_width=True):
                                 with st.spinner("Generando PDF..."):
                                     user_id = st.session_state.get('user_id', None)
                                     nosis_data = consultar_y_evaluar_nosis(cuit_s1_digits, user_id)
                                     if 'error' not in nosis_data:
-                                        payload = nosis_data.get('payload_crudo', {})
-                                        dictamen = nosis_data.get('dictamen', '')
-                                        semaforos = nosis_data.get('semaforos', {})
-                                        explicacion = nosis_data.get('explicacion', '')
-                                        from modulos.reporte_pdf import generar_pdf_reporte_nosis
-                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s1_digits, dictamen, semaforos, explicacion)
-                                        st.session_state[pdf_key_s1] = path_pdf
-                                        st.rerun()
+                                        try:
+                                            st.session_state[pdf_key_s1] = build_nosis_pdf_bytes(
+                                                nosis_data.get('payload_crudo', {}),
+                                                cuit_s1_digits,
+                                                nosis_data.get('dictamen', ''),
+                                                nosis_data.get('semaforos', {}),
+                                                nosis_data.get('explicacion', ''),
+                                            )
+                                            st.rerun()
+                                        except Exception as pdf_err:
+                                            st.error(f"No se pudo generar el PDF del socio: {pdf_err}")
                                     else:
                                         st.error(nosis_data['error'])
                                         
@@ -346,33 +338,33 @@ def render_exportados_dashboard():
                         if c1_s2.button("🔍 Análisis Nosis", key=f"btn_socio2_analisis_exp_{cuit_s2_digits}", use_container_width=True):
                             mostrar_modal_socio(cuit_s2_digits, "Socio 2")
                             
-                        # Botón de Descarga inteligente para Socio 2
-                        pdf_key_s2 = f"pdf_path_socio_exp_{cuit_s2_digits}"
-                        import os
-                        if pdf_key_s2 in st.session_state and os.path.exists(st.session_state[pdf_key_s2]):
-                            with open(st.session_state[pdf_key_s2], "rb") as f:
-                                c2_s2.download_button(
-                                    label="📥 descarga de resumen Cuit socio",
-                                    data=f,
-                                    file_name=f"Resumen_Socio_{cuit_s2_digits}.pdf",
-                                    mime="application/pdf",
-                                    key=f"dl_socio2_ready_exp_{cuit_s2_digits}",
-                                    use_container_width=True
-                                )
+                        pdf_key_s2 = f"pdf_bytes_socio_exp_{cuit_s2_digits}"
+                        if pdf_key_s2 in st.session_state:
+                            c2_s2.download_button(
+                                label="Descargar resumen CUIT socio",
+                                data=st.session_state[pdf_key_s2],
+                                file_name=f"Resumen_Socio_{cuit_s2_digits}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_socio2_ready_exp_{cuit_s2_digits}",
+                                use_container_width=True,
+                            )
                         else:
-                            if c2_s2.button("📥 descarga de resumen Cuit socio", key=f"dl_socio2_gen_exp_{cuit_s2_digits}", use_container_width=True):
+                            if c2_s2.button("Generar resumen CUIT socio", key=f"dl_socio2_gen_exp_{cuit_s2_digits}", use_container_width=True):
                                 with st.spinner("Generando PDF..."):
                                     user_id = st.session_state.get('user_id', None)
                                     nosis_data = consultar_y_evaluar_nosis(cuit_s2_digits, user_id)
                                     if 'error' not in nosis_data:
-                                        payload = nosis_data.get('payload_crudo', {})
-                                        dictamen = nosis_data.get('dictamen', '')
-                                        semaforos = nosis_data.get('semaforos', {})
-                                        explicacion = nosis_data.get('explicacion', '')
-                                        from modulos.reporte_pdf import generar_pdf_reporte_nosis
-                                        path_pdf = generar_pdf_reporte_nosis(payload, cuit_s2_digits, dictamen, semaforos, explicacion)
-                                        st.session_state[pdf_key_s2] = path_pdf
-                                        st.rerun()
+                                        try:
+                                            st.session_state[pdf_key_s2] = build_nosis_pdf_bytes(
+                                                nosis_data.get('payload_crudo', {}),
+                                                cuit_s2_digits,
+                                                nosis_data.get('dictamen', ''),
+                                                nosis_data.get('semaforos', {}),
+                                                nosis_data.get('explicacion', ''),
+                                            )
+                                            st.rerun()
+                                        except Exception as pdf_err:
+                                            st.error(f"No se pudo generar el PDF del socio: {pdf_err}")
                                     else:
                                         st.error(nosis_data['error'])
             

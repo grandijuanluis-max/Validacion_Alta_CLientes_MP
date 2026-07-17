@@ -10,6 +10,7 @@ from modulos.api_afip import consultar_cuit_afip
 from modulos.api_nosis import consultar_y_evaluar_nosis
 from modulos.generador_dbi import generar_archivo_dbi
 from modulos.presea_db import fetch_presea_clientes, migration_sql, update_cliente
+from modulos.reporte_pdf import render_nosis_pdf_download
 from utils.ftp_sync import upload_exports
 
 MAP_TIPO_RESP = {
@@ -63,22 +64,16 @@ def _render_nosis_panel(client_data, key_prefix):
     c5.metric(f"{_pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get("baches_afip_meses", 0))
 
     st.markdown("##### 📄 Exportación de Reporte Oficial")
-    try:
-        from modulos.reporte_pdf import generar_pdf_reporte_nosis
-        path_pdf = generar_pdf_reporte_nosis(
-            payload, cuit, dictamen, semaforos, nosis_data.get("explicacion", "")
-        )
-        with open(path_pdf, "rb") as pdf_file:
-            st.download_button(
-                "📥 Descargar Resumen PDF",
-                data=pdf_file,
-                file_name=f"Resumen_Riesgo_{cuit}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key=f"dl_pdf_presea_{key_prefix}",
-            )
-    except Exception as e:
-        st.caption(f"No se pudo generar PDF: {e}")
+    render_nosis_pdf_download(
+        payload,
+        cuit,
+        dictamen,
+        semaforos,
+        nosis_data.get("explicacion", ""),
+        label="Generar y descargar Resumen PDF",
+        file_name=f"Resumen_Riesgo_{cuit}.pdf",
+        key=f"presea_{key_prefix}",
+    )
 
     return nosis_data
 
