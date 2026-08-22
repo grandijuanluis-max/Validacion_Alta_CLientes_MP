@@ -46,9 +46,12 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Asegurar imports locales (dbi_clientes, ventas_importer)
+# Asegurar imports locales (dbi_clientes, ventas_importer) y módulos del proyecto
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 CONFIG_FILE = os.path.join(BASE_DIR, "windows_sync_config.json")
 LOG_FILE = os.path.join(BASE_DIR, "windows_sync.log")
@@ -815,6 +818,15 @@ def auto_export_a_exportar_to_importa(config):
         return False
 
     try:
+        from modulos.ramos_utils import rubro_export, set_supabase_client
+        set_supabase_client(supabase)
+    except Exception as import_err:
+        logger.warning(f"No se pudo cargar ramos_utils; se exportará giro_comercial tal cual: {import_err}")
+
+        def rubro_export(val):
+            return str(val) if val is not None else ""
+
+    try:
         # 1. Buscar clientes con estado 'A Exportar'
         response = supabase.table('clientes_pendientes').select('*').eq('estado', 'A Exportar').execute()
         if not response.data:
@@ -910,7 +922,7 @@ def auto_export_a_exportar_to_importa(config):
                 str(row.get('pais', ''))[:20],
                 str(row.get('contacto', ''))[:30],
                 str(row.get('telefono', ''))[:40],
-                str(row.get('giro_comercial', ''))[:30],
+                rubro_export(row.get('giro_comercial', ''))[:30],
                 tipo_resp,
                 tipo_doc,
                 cuit_s1_num,
