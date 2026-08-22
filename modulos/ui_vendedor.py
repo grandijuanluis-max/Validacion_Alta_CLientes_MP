@@ -4,17 +4,7 @@ import os
 import re
 from modulos.api_afip import consultar_cuit_afip
 from modulos.db import supabase
-
-def cargar_ramos():
-    if supabase is None:
-        return ["Kiosco", "Supermercado", "Ferretería"]
-    try:
-        response = supabase.table('ramos').select('descrip').execute()
-        if response.data:
-            return sorted([row['descrip'] for row in response.data])
-        return ["Kiosco", "Supermercado", "Ferretería"]
-    except Exception:
-        return ["Kiosco", "Supermercado", "Ferretería"]
+from modulos.ramos_utils import get_ramos_select_options, giro_selectbox_index, giro_to_storage
 
 @st.cache_data
 def buscar_cp(localidad, provincia):
@@ -331,14 +321,11 @@ def render_vendedor_dashboard():
             
         st.markdown("##### Datos Comerciales y Societarios")
         
-        ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
+        ramos_disponibles = ["Seleccione un ramo..."] + get_ramos_select_options()
         giro_voz = st.session_state['voz_datos'].get('giro_comercial', '')
         idx_giro = 0
         if giro_voz:
-            for i, r in enumerate(ramos_disponibles):
-                if giro_voz.lower() in r.lower() or r.lower() in giro_voz.lower():
-                    idx_giro = i
-                    break
+            idx_giro = giro_selectbox_index(giro_voz, ramos_disponibles[1:]) + 1
         giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles, index=idx_giro)
         
         # Determinar si el CUIT de Socio 1 es de carácter obligatorio (para SA o SRL)
@@ -494,7 +481,7 @@ def render_vendedor_dashboard():
                         "documento": observaciones,
                         "cuit_socio1": cuit_socio1.replace('-', '').strip() if cuit_socio1 else "",
                         "cuit_socio2": cuit_socio2.replace('-', '').strip() if cuit_socio2 else "",
-                        "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
+                        "giro_comercial": giro_to_storage(giro_comercial) if giro_comercial != "Seleccione un ramo..." else None,
                         "creado_por": st.session_state.get('user_id'),
                         "vendedor": st.session_state.get('codigo_vendedor'),
                         "estado": "Pendiente",

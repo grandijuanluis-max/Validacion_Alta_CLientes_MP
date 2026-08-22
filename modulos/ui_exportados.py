@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 from modulos.db import supabase
+from modulos.ramos_utils import giro_display
 from modulos.ui_validador import MAP_TIPO_RESP
 from modulos.api_nosis import consultar_y_evaluar_nosis
-from modulos.reporte_pdf import render_nosis_pdf_download, build_nosis_pdf_bytes
+from modulos.reporte_pdf import render_nosis_pdf_download, render_socio_pdf_download
 
 @st.dialog("🛡️ Resumen Nosis de Socio")
 def mostrar_modal_socio(cuit_socio, rol_socio):
@@ -73,7 +74,7 @@ def mostrar_modal_socio(cuit_socio, rol_socio):
             dictamen,
             semaforos,
             nosis_data.get("explicacion", ""),
-            label="Generar y descargar Resumen Socio PDF",
+            label="Descargar Resumen Socio PDF",
             file_name=f"Resumen_Socio_{cuit_socio}.pdf",
             key=f"modal_socio_exp_{cuit_socio}",
         )
@@ -97,6 +98,7 @@ def render_exportados_dashboard():
         df['tipo_resp_desc'] = df['tipo_resp'].apply(lambda x: MAP_TIPO_RESP.get(str(x), str(x) if x else "N/A"))
         
         display_df = df[['nombre', 'cuit', 'tipo_resp_desc', 'giro_comercial', 'contacto', 'estado']].copy()
+        display_df['giro_comercial'] = display_df['giro_comercial'].apply(giro_display)
         display_df.rename(columns={
             'nombre': 'Razón Social',
             'cuit': 'CUIT',
@@ -220,7 +222,7 @@ def render_exportados_dashboard():
                     dictamen,
                     semaforos,
                     nosis_data.get("explicacion", ""),
-                    label="Generar y descargar Resumen PDF",
+                    label="Descargar Resumen PDF",
                     file_name=f"Resumen_Riesgo_{cuit_seleccionado}.pdf",
                     key=f"exportados_{cuit_seleccionado}",
                 )
@@ -263,7 +265,7 @@ def render_exportados_dashboard():
             
             st.markdown("##### Datos Comerciales y Societarios")
             col_s1, col_s2, col_s3 = st.columns(3)
-            col_s1.text_input("Giro Comercial", value=original_client_data.get('giro_comercial', ''), disabled=True, key=f"giro_exp_{cuit_seleccionado}")
+            col_s1.text_input("Giro Comercial", value=giro_display(original_client_data.get('giro_comercial', '')), disabled=True, key=f"giro_exp_{cuit_seleccionado}")
             col_s2.text_input("CUIT Socio 1", value=original_client_data.get('cuit_socio1', ''), disabled=True, key=f"socio1_exp_{cuit_seleccionado}")
             col_s3.text_input("CUIT Socio 2", value=original_client_data.get('cuit_socio2', ''), disabled=True, key=f"socio2_exp_{cuit_seleccionado}")
 
@@ -292,36 +294,13 @@ def render_exportados_dashboard():
                         c1, c2 = st.columns(2)
                         if c1.button("🔍 Análisis Nosis", key=f"btn_socio1_analisis_exp_{cuit_s1_digits}", use_container_width=True):
                             mostrar_modal_socio(cuit_s1_digits, "Socio 1")
-                            
-                        pdf_key_s1 = f"pdf_bytes_socio_exp_{cuit_s1_digits}"
-                        if pdf_key_s1 in st.session_state:
-                            c2.download_button(
-                                label="Descargar resumen CUIT socio",
-                                data=st.session_state[pdf_key_s1],
+                        with c2:
+                            render_socio_pdf_download(
+                                cuit_s1_digits,
+                                st.session_state.get("user_id"),
+                                key=f"socio1_exp_{cuit_s1_digits}",
                                 file_name=f"Resumen_Socio_{cuit_s1_digits}.pdf",
-                                mime="application/pdf",
-                                key=f"dl_socio1_ready_exp_{cuit_s1_digits}",
-                                use_container_width=True,
                             )
-                        else:
-                            if c2.button("Generar resumen CUIT socio", key=f"dl_socio1_gen_exp_{cuit_s1_digits}", use_container_width=True):
-                                with st.spinner("Generando PDF..."):
-                                    user_id = st.session_state.get('user_id', None)
-                                    nosis_data = consultar_y_evaluar_nosis(cuit_s1_digits, user_id)
-                                    if 'error' not in nosis_data:
-                                        try:
-                                            st.session_state[pdf_key_s1] = build_nosis_pdf_bytes(
-                                                nosis_data.get('payload_crudo', {}),
-                                                cuit_s1_digits,
-                                                nosis_data.get('dictamen', ''),
-                                                nosis_data.get('semaforos', {}),
-                                                nosis_data.get('explicacion', ''),
-                                            )
-                                            st.rerun()
-                                        except Exception as pdf_err:
-                                            st.error(f"No se pudo generar el PDF del socio: {pdf_err}")
-                                    else:
-                                        st.error(nosis_data['error'])
                                         
                 if has_soc2:
                     with col_soc2:
@@ -337,36 +316,13 @@ def render_exportados_dashboard():
                         c1_s2, c2_s2 = st.columns(2)
                         if c1_s2.button("🔍 Análisis Nosis", key=f"btn_socio2_analisis_exp_{cuit_s2_digits}", use_container_width=True):
                             mostrar_modal_socio(cuit_s2_digits, "Socio 2")
-                            
-                        pdf_key_s2 = f"pdf_bytes_socio_exp_{cuit_s2_digits}"
-                        if pdf_key_s2 in st.session_state:
-                            c2_s2.download_button(
-                                label="Descargar resumen CUIT socio",
-                                data=st.session_state[pdf_key_s2],
+                        with c2_s2:
+                            render_socio_pdf_download(
+                                cuit_s2_digits,
+                                st.session_state.get("user_id"),
+                                key=f"socio2_exp_{cuit_s2_digits}",
                                 file_name=f"Resumen_Socio_{cuit_s2_digits}.pdf",
-                                mime="application/pdf",
-                                key=f"dl_socio2_ready_exp_{cuit_s2_digits}",
-                                use_container_width=True,
                             )
-                        else:
-                            if c2_s2.button("Generar resumen CUIT socio", key=f"dl_socio2_gen_exp_{cuit_s2_digits}", use_container_width=True):
-                                with st.spinner("Generando PDF..."):
-                                    user_id = st.session_state.get('user_id', None)
-                                    nosis_data = consultar_y_evaluar_nosis(cuit_s2_digits, user_id)
-                                    if 'error' not in nosis_data:
-                                        try:
-                                            st.session_state[pdf_key_s2] = build_nosis_pdf_bytes(
-                                                nosis_data.get('payload_crudo', {}),
-                                                cuit_s2_digits,
-                                                nosis_data.get('dictamen', ''),
-                                                nosis_data.get('semaforos', {}),
-                                                nosis_data.get('explicacion', ''),
-                                            )
-                                            st.rerun()
-                                        except Exception as pdf_err:
-                                            st.error(f"No se pudo generar el PDF del socio: {pdf_err}")
-                                    else:
-                                        st.error(nosis_data['error'])
             
             st.markdown("##### Domicilio Fiscal (AFIP)")
             st.text_input("Domicilio Fiscal", value=original_client_data.get('domicilio_f', ''), disabled=True)

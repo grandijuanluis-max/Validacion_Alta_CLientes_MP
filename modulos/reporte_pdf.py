@@ -419,6 +419,105 @@ def build_nosis_pdf_bytes(
             pass
 
 
+PDF_DOWNLOAD_LABEL = "Descargar Resumen PDF"
+PDF_SOCIO_DOWNLOAD_LABEL = "Descargar resumen CUIT socio"
+PDF_WIDGET_VERSION = "v3"
+
+
+def _clear_stale_pdf_session_keys() -> None:
+    """Elimina claves del flujo antiguo de dos botones."""
+    import streamlit as st
+
+    stale_markers = (
+        "nosis_pdf_bytes::",
+        "nosis_pdf_err::",
+        "pdf_ready::",
+        "pdf_err::",
+        "nosis_pdf_store::",
+        "nosis_pdf_trigger::",
+        "pdf_path_socio",
+        "pdf_bytes_socio",
+        "::generate",
+    )
+    for key in list(st.session_state.keys()):
+        if any(marker in key for marker in stale_markers):
+            del st.session_state[key]
+
+
+def _fragment_if_available(func):
+    import streamlit as st
+
+    fragment = getattr(st, "fragment", None)
+    return fragment(func) if fragment else func
+
+
+def _json_cache(value) -> str:
+    import json
+
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _cached_nosis_pdf_bytes_impl(
+    payload_json: str,
+    cuit: str,
+    dictamen: str,
+    semaforos_json: str,
+    explicacion: str,
+) -> bytes:
+    import json
+
+    return build_nosis_pdf_bytes(
+        json.loads(payload_json),
+        cuit,
+        dictamen,
+        json.loads(semaforos_json),
+        explicacion,
+    )
+
+
+def _cached_socio_pdf_bytes_impl(cuit: str, user_id: str | None) -> bytes:
+    from modulos.api_nosis import consultar_y_evaluar_nosis
+
+    cuit_clean = "".join(filter(str.isdigit, str(cuit))) or str(cuit).strip()
+    nosis_data = consultar_y_evaluar_nosis(cuit_clean, user_id)
+    if "error" in nosis_data:
+        raise RuntimeError(nosis_data["error"])
+    return build_nosis_pdf_bytes(
+        nosis_data.get("payload_crudo", {}),
+        cuit_clean,
+        nosis_data.get("dictamen", ""),
+        nosis_data.get("semaforos", {}),
+        nosis_data.get("explicacion", ""),
+    )
+
+
+_CACHED_NOSIS_PDF = None
+_CACHED_SOCIO_PDF = None
+
+
+def _get_cached_nosis_pdf_bytes():
+    global _CACHED_NOSIS_PDF
+    if _CACHED_NOSIS_PDF is None:
+        import streamlit as st
+
+        _CACHED_NOSIS_PDF = st.cache_data(show_spinner="Generando PDF...")(
+            _cached_nosis_pdf_bytes_impl
+        )
+    return _CACHED_NOSIS_PDF
+
+
+def _get_cached_socio_pdf_bytes():
+    global _CACHED_SOCIO_PDF
+    if _CACHED_SOCIO_PDF is None:
+        import streamlit as st
+
+        _CACHED_SOCIO_PDF = st.cache_data(show_spinner="Generando PDF del socio...")(
+            _cached_socio_pdf_bytes_impl
+        )
+    return _CACHED_SOCIO_PDF
+
+
+@_fragment_if_available
 def render_nosis_pdf_download(
     payload: dict,
     cuit: str,
@@ -426,41 +525,73 @@ def render_nosis_pdf_download(
     semaforos: dict,
     explicacion: str = "",
     *,
-    label: str = "Generar y descargar Resumen PDF",
+    label: str = PDF_DOWNLOAD_LABEL,
     file_name: str | None = None,
     key: str,
     use_container_width: bool = True,
 ) -> None:
-    """Genera el PDF solo al solicitarlo (evita errores al abrir la ficha)."""
+    """Un solo botón Streamlit: genera (cache) y descarga el PDF en un clic."""
     import streamlit as st
+
+    _clear_stale_pdf_session_keys()
 
     cuit_clean = "".join(filter(str.isdigit, str(cuit))) or str(cuit).strip()
     file_name = file_name or f"Resumen_Riesgo_{cuit_clean}.pdf"
-    bytes_key = f"nosis_pdf_bytes::{key}"
-    err_key = f"nosis_pdf_err::{key}"
+    payload_norm = normalizar_payload_nosis(payload)
+    semaforos_norm = semaforos or {}
+    cached_builder = _get_cached_nosis_pdf_bytes()
 
-    if st.button(label, key=f"{key}::generate", use_container_width=use_container_width):
-        with st.spinner("Generando PDF..."):
-            try:
-                st.session_state[bytes_key] = build_nosis_pdf_bytes(
-                    payload, cuit_clean, dictamen, semaforos, explicacion
-                )
-                st.session_state.pop(err_key, None)
-            except Exception as exc:
-                st.session_state[err_key] = str(exc)
-                st.session_state.pop(bytes_key, None)
-        st.rerun()
-
-    if err_key in st.session_state:
-        st.error(f"No se pudo generar el PDF: {st.session_state[err_key]}")
-
-    if st.session_state.get(bytes_key):
+    try:
+        pdf_bytes = cached_builder(
+            _json_cache(payload_norm),
+            cuit_clean,
+            dictamen or "",
+            _json_cache(semaforos_norm),
+            explicacion or "",
+        )
         st.download_button(
-            label="Descargar PDF generado",
-            data=st.session_state[bytes_key],
+            label=PDF_DOWNLOAD_LABEL,
+            data=pdf_bytes,
             file_name=file_name,
             mime="application/pdf",
-            key=f"{key}::download",
+            key=f"{key}::{PDF_WIDGET_VERSION}::download",
             use_container_width=use_container_width,
             type="primary",
         )
+    except Exception as exc:
+        st.error(f"No se pudo generar el PDF: {exc}")
+
+
+@_fragment_if_available
+def render_socio_pdf_download(
+    cuit: str,
+    user_id: str | None,
+    *,
+    label: str = PDF_SOCIO_DOWNLOAD_LABEL,
+    file_name: str | None = None,
+    key: str,
+    use_container_width: bool = True,
+) -> None:
+    """Un solo botón Streamlit para PDF de socios."""
+    import streamlit as st
+
+    _clear_stale_pdf_session_keys()
+
+    cuit_clean = "".join(filter(str.isdigit, str(cuit))) or str(cuit).strip()
+    file_name = file_name or f"Resumen_Socio_{cuit_clean}.pdf"
+    user_key = str(user_id or "")
+    cached_builder = _get_cached_socio_pdf_bytes()
+
+    try:
+        pdf_bytes = cached_builder(cuit_clean, user_key)
+        st.download_button(
+            label=PDF_SOCIO_DOWNLOAD_LABEL,
+            data=pdf_bytes,
+            file_name=file_name,
+            mime="application/pdf",
+            key=f"{key}::{PDF_WIDGET_VERSION}::download",
+            use_container_width=use_container_width,
+            type="primary",
+        )
+    except Exception as exc:
+        st.error(f"No se pudo generar el PDF del socio: {exc}")

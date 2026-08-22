@@ -1,6 +1,7 @@
 import os
 import datetime
 import dbf
+from modulos.ramos_utils import rubro_export
 
 def format_sdf_field(val, length, is_numeric=False):
     val_str = str(val) if val is not None else ""
@@ -89,7 +90,7 @@ def generar_archivo_dbi(dataframe_clientes, numero_inicio_codigo=1):
             str(row.get('pais', ''))[:20],              # PAIS C(20)
             str(row.get('contacto', ''))[:30],          # CONTACTO C(30)
             str(row.get('telefono', ''))[:40],          # TELEFONO C(40)
-            str(row.get('giro_comercial', ''))[:30],    # RUBRO C(30)
+            rubro_export(row.get('giro_comercial', ''))[:30],    # RUBRO C(30) — código ramo
             tipo_resp,                                # TIPO_RESP N(5,1)
             tipo_doc,                                 # TIPO_DOC N(2,0)
             cuit_s1_num,                              # CUIT_S1 N(12,0)
