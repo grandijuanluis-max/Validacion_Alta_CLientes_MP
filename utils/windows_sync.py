@@ -3,9 +3,13 @@
 
 """
 Script de sincronización para ejecutar localmente en el Servidor Windows (Presea).
-Se encarga de:
-1. Bajar del FTP los archivos exportados por Streamlit y guardarlos en la carpeta de IMPORTA de Presea.
-2. Subir al FTP e importar a Supabase los archivos (CLIENTESPA.DBI, CODIGOSMP.DBI, ramo.csv) depositados en EXPORTA por Presea.
+Programación habitual: lunes a viernes, 09:00 / 13:00 / 17:00 (Task Scheduler).
+
+En cada ejecución:
+0. Exportar clientes app en estado 'A Exportar' → carpeta IMPORTA de Presea.
+1. Bajar del FTP archivos de Streamlit → IMPORTA.
+2. Subir e importar a Supabase lo depositado por Presea en EXPORTA (CLIENTESPA, CODIGOSMP, ramo.csv).
+3. Importar ventas.dbi → Supabase.
 """
 
 import os
@@ -46,9 +50,12 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Asegurar imports locales (dbi_clientes, ventas_importer)
+# Asegurar imports locales (dbi_clientes, ventas_importer) y módulos del proyecto
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 CONFIG_FILE = os.path.join(BASE_DIR, "windows_sync_config.json")
 LOG_FILE = os.path.join(BASE_DIR, "windows_sync.log")
@@ -796,47 +803,79 @@ def sync_ventas_to_ftp_and_supabase(config):
 
 def auto_export_a_exportar_to_importa(config):
     """
-    Exportación automática a las 21hs de Argentina (rango de 21:00 a 05:00 hs).
-    Si hay clientes en estado 'A Exportar' en Supabase, genera los archivos DBI
-    directamente en la carpeta IMPORTA del servidor Windows, los marca como 'Exportado'
-    y los sube de respaldo al FTP.
+    Exportación automática en cada ejecución del sincronizador.
+    Si hay clientes app en estado 'A Exportar', genera Clientes_web.dbi en IMPORTA,
+    persiste códigos en Supabase y sube copia de respaldo al FTP.
+
+    Si IMPORTA ya tiene un Clientes_web.dbi reciente (sin procesar por Presea),
+    pospone la exportación para no pisar el lote anterior. Usar --force-auto-export
+    para forzar.
     """
     now = datetime.datetime.now()
-    # Rango de ejecución: de 21:00 a 05:00 hs (hora local del servidor de Windows)
-    # Si viene el argumento '--force-auto-export', se ignora el rango de hora.
     force_export = "--force-auto-export" in sys.argv
-    if not force_export and not (now.hour >= 21 or now.hour < 5):
-        return True
 
-    logger.info("--- Iniciando comprobación de exportación automática (rango 21hs a 05hs) ---")
+    logger.info("--- Iniciando exportación automática de clientes 'A Exportar' ---")
     supabase = get_supabase_client(config)
     if supabase is None:
         logger.error("No se puede realizar la exportación automática sin cliente Supabase.")
         return False
 
     try:
-        # 1. Buscar clientes con estado 'A Exportar'
-        response = supabase.table('clientes_pendientes').select('*').eq('estado', 'A Exportar').execute()
+        from modulos.ramos_utils import rubro_export, set_supabase_client
+        set_supabase_client(supabase)
+    except Exception as import_err:
+        logger.warning(f"No se pudo cargar ramos_utils; se exportará giro_comercial tal cual: {import_err}")
+
+        def rubro_export(val):
+            return str(val) if val is not None else ""
+
+    try:
+        # 1. Buscar clientes app con estado 'A Exportar'
+        response = (
+            supabase.table("clientes_pendientes")
+            .select("*")
+            .eq("estado", "A Exportar")
+            .eq("origen", "app")
+            .execute()
+        )
         if not response.data:
             logger.info("No hay clientes en estado 'A Exportar' para procesar automáticamente.")
             return True
 
         clientes_a_exportar = response.data
-        logger.info(f"Detectados {len(clientes_a_exportar)} clientes para exportar automáticamente.")
+        logger.info(f"Detectados {len(clientes_a_exportar)} clientes app para exportar automáticamente.")
 
-        # 2. Obtener secuencia de códigos
-        secuencia_resp = supabase.table('secuencia_codigo').select('ultimo_valor').eq('id', 1).execute()
-        ultimo_valor = 0 if not secuencia_resp.data else secuencia_resp.data[0]['ultimo_valor']
-        numero_inicio = max(40000, int(ultimo_valor) + 1)
+        from modulos.presea_db import (
+            guardar_exportacion_app,
+            leer_inicio_secuencia_app,
+            resolver_codigos_app,
+        )
 
-        # 3. Definir directorio de salida IMPORTA
+        numero_inicio = leer_inicio_secuencia_app(supabase)
+        clientes_a_exportar, ultimo_assigned = resolver_codigos_app(clientes_a_exportar, numero_inicio)
+
+        # 2. Definir directorio de salida IMPORTA
         importa_dir = config.get("IMPORTA_DIR")
         os.makedirs(importa_dir, exist_ok=True)
 
         ruta_clientes_web = os.path.join(importa_dir, "Clientes_web.dbi")
         ruta_domicilios = os.path.join(importa_dir, "domicilios_entrega.txt")
 
-        # Mover archivos existentes si ya existen en IMPORTA a la carpeta No_process para no pisar
+        max_pending_hours = float(config.get("IMPORTA_PENDING_MAX_HOURS", 3))
+        if not force_export and os.path.exists(ruta_clientes_web):
+            age_hours = (
+                now - datetime.datetime.fromtimestamp(os.path.getmtime(ruta_clientes_web))
+            ).total_seconds() / 3600
+            if age_hours < max_pending_hours:
+                msg = (
+                    f"Clientes_web.dbi en IMPORTA tiene {age_hours:.1f}h "
+                    f"(umbral {max_pending_hours}h). Exportación pospuesta hasta que Presea lo procese."
+                )
+                logger.info(msg)
+                log_importa(msg, config)
+                return True
+
+        # Mover archivos viejos en IMPORTA a No_process antes de generar uno nuevo
         archivos_generados = [
             "Clientes_web.dbi",
             "Clientes_web.fpt",
@@ -875,11 +914,13 @@ def auto_export_a_exportar_to_importa(config):
         if os.path.exists(ruta_memo_web):
             os.remove(ruta_memo_web)
 
+        codigo_por_id = {row["id"]: int(row["codigo"]) for row in clientes_a_exportar}
+
         table = dbf.Table(ruta_clientes_web, schema_str, dbf_type='fp', codepage='cp1252')
         table.open(mode=dbf.READ_WRITE)
 
-        codigo_actual = numero_inicio
         for row in clientes_a_exportar:
+            codigo_actual = codigo_por_id[row["id"]]
             cuit_num = str(row.get('cuit', '0')).replace('-', '').replace(' ', '')
             cuit_num = int(cuit_num) if cuit_num.isdigit() else 0
 
@@ -910,7 +951,7 @@ def auto_export_a_exportar_to_importa(config):
                 str(row.get('pais', ''))[:20],
                 str(row.get('contacto', ''))[:30],
                 str(row.get('telefono', ''))[:40],
-                str(row.get('giro_comercial', ''))[:30],
+                rubro_export(row.get('giro_comercial', ''))[:30],
                 tipo_resp,
                 tipo_doc,
                 cuit_s1_num,
@@ -923,19 +964,18 @@ def auto_export_a_exportar_to_importa(config):
                 str(row.get('documento', ''))
             )
             table.append(registro)
-            codigo_actual += 1
 
         table.close()
 
 
         # Escribir domicilios_entrega.txt
-        codigo_actual_dom = numero_inicio
         lineas_dom = []
         for row in clientes_a_exportar:
-            codigo_mask = f"{codigo_actual_dom:06d}-000"
+            codigo_dom = codigo_por_id[row["id"]]
+            codigo_mask = f"{codigo_dom:06d}-000"
             linea_dom = (
                 format_sdf_field(codigo_mask, 10, is_numeric=False) +
-                format_sdf_field(codigo_actual_dom, 6, is_numeric=True) +
+                format_sdf_field(codigo_dom, 6, is_numeric=True) +
                 format_sdf_field(row.get('domicilio_e', ''), 30, is_numeric=False) +
                 format_sdf_field(row.get('cp_ent', ''), 5, is_numeric=False) +
                 format_sdf_field(row.get('local_ent', ''), 35, is_numeric=False) +
@@ -944,23 +984,13 @@ def auto_export_a_exportar_to_importa(config):
                 format_sdf_field(row.get('local_ent', ''), 35, is_numeric=False)
             )
             lineas_dom.append(linea_dom)
-            codigo_actual_dom += 1
 
         with open(ruta_domicilios, "w", encoding="cp1252", newline="") as f_sdf:
             for line in lineas_dom:
                 f_sdf.write(line + "\r\n")
 
-        ultimo_assigned = codigo_actual - 1
-
-        # 5. Actualizar estados en Supabase
-        for row in clientes_a_exportar:
-            supabase.table('clientes_pendientes').update({'estado': 'Exportado'}).eq('id', row['id']).execute()
-
-        # 6. Actualizar secuencia en Supabase
-        if secuencia_resp.data:
-            supabase.table('secuencia_codigo').update({'ultimo_valor': ultimo_assigned}).eq('id', 1).execute()
-        else:
-            supabase.table('secuencia_codigo').insert({'id': 1, 'ultimo_valor': ultimo_assigned}).execute()
+        # 5. Persistir codigo, estado Exportado y secuencia en Supabase
+        guardar_exportacion_app(supabase, clientes_a_exportar, ultimo_assigned)
 
         log_importa(f"Procesada exportación automática de {len(clientes_a_exportar)} clientes exitosamente (Cierre del día).", config)
         logger.info(f"Exportación automática finalizada con éxito. Códigos asignados hasta {ultimo_assigned}.")
@@ -984,7 +1014,7 @@ def auto_export_a_exportar_to_importa(config):
 
         return True
     except Exception as e:
-        logger.error(f"Error en el proceso de exportación automática a las 21hs: {e}")
+        logger.error(f"Error en el proceso de exportación automática: {e}")
         log_importa(f"Error en exportación automática: {e}", config)
         return False
 
@@ -995,7 +1025,7 @@ def main():
     
     config = load_config()
     
-    # 0. Ejecutar exportación automática nocturna si corresponde
+    # 0. Exportar clientes app pendientes de exportación
     auto_export_a_exportar_to_importa(config)
     
     # 1. Ejecutar descarga desde FTP a carpeta local IMPORTA

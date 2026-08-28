@@ -10,6 +10,13 @@ from modulos.api_afip import consultar_cuit_afip
 from modulos.api_nosis import consultar_y_evaluar_nosis
 from modulos.generador_dbi import generar_archivo_dbi
 from modulos.presea_db import fetch_presea_clientes, migration_sql, update_cliente
+from modulos.ramos_utils import (
+    giro_display,
+    giro_selectbox_index,
+    giro_to_storage,
+    get_ramos_select_options,
+)
+from modulos.reporte_pdf import render_nosis_pdf_download
 from utils.ftp_sync import upload_exports
 
 MAP_TIPO_RESP = {
@@ -63,22 +70,16 @@ def _render_nosis_panel(client_data, key_prefix):
     c5.metric(f"{_pinta_semaforo(semaforos.get('afip'))} Deuda AFIP", payload.get("baches_afip_meses", 0))
 
     st.markdown("##### 📄 Exportación de Reporte Oficial")
-    try:
-        from modulos.reporte_pdf import generar_pdf_reporte_nosis
-        path_pdf = generar_pdf_reporte_nosis(
-            payload, cuit, dictamen, semaforos, nosis_data.get("explicacion", "")
-        )
-        with open(path_pdf, "rb") as pdf_file:
-            st.download_button(
-                "📥 Descargar Resumen PDF",
-                data=pdf_file,
-                file_name=f"Resumen_Riesgo_{cuit}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key=f"dl_pdf_presea_{key_prefix}",
-            )
-    except Exception as e:
-        st.caption(f"No se pudo generar PDF: {e}")
+    render_nosis_pdf_download(
+        payload,
+        cuit,
+        dictamen,
+        semaforos,
+        nosis_data.get("explicacion", ""),
+        label="Descargar Resumen PDF",
+        file_name=f"Resumen_Riesgo_{cuit}.pdf",
+        key=f"presea_{key_prefix}",
+    )
 
     return nosis_data
 
@@ -289,7 +290,14 @@ def render_clientes_presea():
 
             st.markdown("##### Datos comerciales")
             col_c1, col_c2 = st.columns(2)
-            giro = col_c1.text_input("Giro Comercial", value=client_data.get("giro_comercial", ""), key=f"p_giro_{client_id}")
+            ramos_opciones = get_ramos_select_options()
+            idx_giro = giro_selectbox_index(client_data.get("giro_comercial", ""), ramos_opciones)
+            giro = col_c1.selectbox(
+                "Giro Comercial",
+                ramos_opciones,
+                index=idx_giro,
+                key=f"p_giro_{client_id}",
+            )
             contacto = col_c2.text_input("Contacto", value=client_data.get("contacto", ""), key=f"p_cont_{client_id}")
             telefono = st.text_input("Teléfono", value=client_data.get("telefono", ""), key=f"p_tel_{client_id}")
 
@@ -313,7 +321,7 @@ def render_clientes_presea():
                     "mes_cierre": mes_cierre,
                     "tipo_doc": tipo_doc,
                     "tipo_resp": tipo_resp,
-                    "giro_comercial": giro,
+                    "giro_comercial": giro_to_storage(giro),
                     "contacto": contacto,
                     "telefono": telefono,
                     "validado_arca": True,
@@ -342,7 +350,22 @@ def render_clientes_presea():
             client_id_s = client_id
 
             col_s1, col_s2, col_s3 = st.columns(3)
-            giro_n = col_s1.text_input("Giro", value=client_data.get("giro_comercial", ""), disabled=not edit_mode, key=f"pn_giro_{client_id_s}")
+            ramos_opciones_n = get_ramos_select_options()
+            if edit_mode:
+                idx_giro_n = giro_selectbox_index(client_data.get("giro_comercial", ""), ramos_opciones_n)
+                giro_n = col_s1.selectbox(
+                    "Giro",
+                    ramos_opciones_n,
+                    index=idx_giro_n,
+                    key=f"pn_giro_{client_id_s}",
+                )
+            else:
+                giro_n = col_s1.text_input(
+                    "Giro",
+                    value=giro_display(client_data.get("giro_comercial", "")),
+                    disabled=True,
+                    key=f"pn_giro_{client_id_s}",
+                )
             socio1 = col_s2.text_input("CUIT Socio 1", value=client_data.get("cuit_socio1", ""), disabled=not edit_mode, key=f"pn_s1_{client_id_s}")
             socio2 = col_s3.text_input("CUIT Socio 2", value=client_data.get("cuit_socio2", ""), disabled=not edit_mode, key=f"pn_s2_{client_id_s}")
 
@@ -358,7 +381,7 @@ def render_clientes_presea():
 
             if st.button("✅ Confirmar validación NOSIS", type="primary", use_container_width=True, key=f"btn_save_nosis_{client_id_s}"):
                 datos_n = {
-                    "giro_comercial": giro_n,
+                    "giro_comercial": giro_to_storage(giro_n) if edit_mode else client_data.get("giro_comercial"),
                     "cuit_socio1": socio1,
                     "cuit_socio2": socio2,
                     "validado_nosis": True,

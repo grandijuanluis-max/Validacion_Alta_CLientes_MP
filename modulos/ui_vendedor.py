@@ -3,18 +3,9 @@ import pandas as pd
 import os
 import re
 from modulos.api_afip import consultar_cuit_afip
+from modulos.cuit_utils import cuit_existe_en_db, origen_cliente_label
 from modulos.db import supabase
-
-def cargar_ramos():
-    if supabase is None:
-        return ["Kiosco", "Supermercado", "Ferretería"]
-    try:
-        response = supabase.table('ramos').select('descrip').execute()
-        if response.data:
-            return sorted([row['descrip'] for row in response.data])
-        return ["Kiosco", "Supermercado", "Ferretería"]
-    except Exception:
-        return ["Kiosco", "Supermercado", "Ferretería"]
+from modulos.ramos_utils import get_ramos_select_options, giro_selectbox_index, giro_to_storage
 
 @st.cache_data
 def buscar_cp(localidad, provincia):
@@ -36,20 +27,13 @@ def buscar_cp(localidad, provincia):
         print(f"Error buscando CP en Supabase: {e}")
         return []
 
-def cuit_existe_en_db(cuit):
-    if not cuit or supabase is None:
-        return None
-    cuit_limpio = "".join(filter(str.isdigit, str(cuit)))
-    if not cuit_limpio:
-        return None
-    try:
-        response = supabase.table('clientes_pendientes').select('id, nombre, estado').eq('cuit', cuit_limpio).execute()
-        if response.data:
-            return response.data[0]
-        return None
-    except Exception as e:
-        print(f"Error buscando CUIT en DB: {e}")
-        return None
+def _mensaje_cuit_duplicado(existente: dict, cuit_limpio: str) -> str:
+    origen_txt = origen_cliente_label(existente)
+    return (
+        f"El CUIT <b>{cuit_limpio}</b> ya se encuentra registrado en el sistema."
+        f"<br>• Razón Social: <b>{existente.get('nombre', 'Desconocida')}</b>"
+        f"<br>• Origen: <b>{origen_txt}</b>"
+    )
 
 def render_vendedor_dashboard():
     st.header("🏢 Alta de Nuevo Cliente")
@@ -164,16 +148,14 @@ def render_vendedor_dashboard():
                     st.warning("Escribe un CUIT primero.")
                 else:
                     cuit_limpio = "".join(filter(str.isdigit, cuit_busqueda))
-                    existente = cuit_existe_en_db(cuit_limpio)
+                    existente = cuit_existe_en_db(supabase, cuit_limpio)
                     if existente:
                         st.markdown(
                             f"""
                             <div style="background-color: #fce8e6; border-left: 6px solid #d93025; padding: 16px; border-radius: 8px; margin-bottom: 15px;">
                                 <h4 style="color: #c5221f; margin: 0 0 8px 0; font-weight: bold; font-size: 18px;">🛑 CUIT YA INGRESADO</h4>
                                 <p style="color: #601e1a; margin: 0; font-size: 14px;">
-                                    El CUIT <b>{cuit_limpio}</b> ya se encuentra registrado en el sistema.
-                                    <br>• Razón Social: <b>{existente.get('nombre', 'Desconocida')}</b>
-                                    <br>• Estado Actual: <b>{existente.get('estado', 'Pendiente')}</b>
+                                    {_mensaje_cuit_duplicado(existente, cuit_limpio)}
                                 </p>
                             </div>
                             """,
@@ -216,16 +198,14 @@ def render_vendedor_dashboard():
         with col2:
             if st.button("📝 Cargar Manualmente (Sin AFIP)", use_container_width=True):
                 cuit_limpio = "".join(filter(str.isdigit, cuit_busqueda))
-                existente = cuit_existe_en_db(cuit_limpio)
+                existente = cuit_existe_en_db(supabase, cuit_limpio)
                 if existente:
                     st.markdown(
                         f"""
                         <div style="background-color: #fce8e6; border-left: 6px solid #d93025; padding: 16px; border-radius: 8px; margin-bottom: 15px;">
                             <h4 style="color: #c5221f; margin: 0 0 8px 0; font-weight: bold; font-size: 18px;">🛑 CUIT YA INGRESADO</h4>
                             <p style="color: #601e1a; margin: 0; font-size: 14px;">
-                                El CUIT <b>{cuit_limpio}</b> ya se encuentra registrado en el sistema.
-                                <br>• Razón Social: <b>{existente.get('nombre', 'Desconocida')}</b>
-                                <br>• Estado Actual: <b>{existente.get('estado', 'Pendiente')}</b>
+                                {_mensaje_cuit_duplicado(existente, cuit_limpio)}
                             </p>
                         </div>
                         """,
@@ -258,7 +238,7 @@ def render_vendedor_dashboard():
             cuit = st.text_input("CUIT *", value=st.session_state['afip_data']['cuit'], disabled=is_afip)
             
         cuit_limpio = "".join(filter(str.isdigit, cuit))
-        existente = cuit_existe_en_db(cuit_limpio)
+        existente = cuit_existe_en_db(supabase, cuit_limpio)
         cuit_duplicado = False
         if existente:
             cuit_duplicado = True
@@ -267,9 +247,7 @@ def render_vendedor_dashboard():
                 <div style="background-color: #fce8e6; border-left: 6px solid #d93025; padding: 16px; border-radius: 8px; margin-top: 10px; margin-bottom: 15px; width: 100%;">
                     <h4 style="color: #c5221f; margin: 0 0 8px 0; font-weight: bold; font-size: 16px;">🛑 CUIT YA INGRESADO DETECTADO</h4>
                     <p style="color: #601e1a; margin: 0; font-size: 14px;">
-                        El CUIT <b>{cuit_limpio}</b> ya se encuentra registrado en el sistema.
-                        <br>• Razón Social: <b>{existente.get('nombre', 'Desconocida')}</b>
-                        <br>• Estado Actual: <b>{existente.get('estado', 'Pendiente')}</b>
+                        {_mensaje_cuit_duplicado(existente, cuit_limpio)}
                     </p>
                 </div>
                 """,
@@ -331,14 +309,11 @@ def render_vendedor_dashboard():
             
         st.markdown("##### Datos Comerciales y Societarios")
         
-        ramos_disponibles = ["Seleccione un ramo..."] + cargar_ramos()
+        ramos_disponibles = ["Seleccione un ramo..."] + get_ramos_select_options()
         giro_voz = st.session_state['voz_datos'].get('giro_comercial', '')
         idx_giro = 0
         if giro_voz:
-            for i, r in enumerate(ramos_disponibles):
-                if giro_voz.lower() in r.lower() or r.lower() in giro_voz.lower():
-                    idx_giro = i
-                    break
+            idx_giro = giro_selectbox_index(giro_voz, ramos_disponibles[1:]) + 1
         giro_comercial = st.selectbox("Giro Comercial (Rubro) *", ramos_disponibles, index=idx_giro)
         
         # Determinar si el CUIT de Socio 1 es de carácter obligatorio (para SA o SRL)
@@ -420,7 +395,12 @@ def render_vendedor_dashboard():
         
         referencia_input = st.text_input("Horarios y días de visita (Referencia)", value="", help="Días y horarios recomendados para visitas o entregas.")
         
-        submit = st.button("Guardar y Enviar a Validación", type="primary", use_container_width=True)
+        submit = st.button(
+            "Guardar y Enviar a Validación",
+            type="primary",
+            use_container_width=True,
+            disabled=cuit_duplicado,
+        )
         
         if submit:
             # Validación estricta de TODOS los campos obligatorios
@@ -459,10 +439,15 @@ def render_vendedor_dashboard():
                 faltantes.append("CUIT Socio 2 (Debe tener exactamente 11 dígitos)")
             
             cuit_limpio = "".join(filter(str.isdigit, cuit))
-            existente_submit = cuit_existe_en_db(cuit_limpio)
-            
+            existente_submit = cuit_existe_en_db(supabase, cuit_limpio)
+
             if existente_submit:
-                st.error(f"❌ Error crítico: El CUIT {cuit_limpio} ya está registrado en el sistema para '{existente_submit.get('nombre', 'Desconocido')}' en estado '{existente_submit.get('estado', 'Pendiente')}'. No se permite registrar CUITs duplicados.")
+                origen_txt = origen_cliente_label(existente_submit)
+                st.error(
+                    f"❌ El CUIT {cuit_limpio} ya está registrado como "
+                    f"'{existente_submit.get('nombre', 'Desconocido')}' ({origen_txt}). "
+                    "No se permite registrar CUITs duplicados."
+                )
             elif faltantes:
                 st.error(f"❌ Error: Faltan completar los siguientes campos obligatorios: {', '.join(faltantes)}")
             elif supabase is None:
@@ -476,7 +461,8 @@ def render_vendedor_dashboard():
                     codigo_resp = st.session_state['afip_data'].get('tipo_resp_codigo', '') if (is_afip and val_tresp) else mapa_resp.get(tresp_sel, "")
                     
                     data = {
-                        "cuit": cuit.upper() if cuit else "",
+                        "cuit": cuit_limpio,
+                        "origen": "app",
                         "nombre": nombre.upper() if nombre else "",
                         "n_fantasia": n_fantasia.upper() if n_fantasia else "",
                         "domicilio_f": domicilio_f.upper() if domicilio_f else "",
@@ -493,7 +479,7 @@ def render_vendedor_dashboard():
                         "documento": observaciones,
                         "cuit_socio1": cuit_socio1.replace('-', '').strip() if cuit_socio1 else "",
                         "cuit_socio2": cuit_socio2.replace('-', '').strip() if cuit_socio2 else "",
-                        "giro_comercial": giro_comercial if giro_comercial != "Seleccione un ramo..." else None,
+                        "giro_comercial": giro_to_storage(giro_comercial) if giro_comercial != "Seleccione un ramo..." else None,
                         "creado_por": st.session_state.get('user_id'),
                         "vendedor": st.session_state.get('codigo_vendedor'),
                         "estado": "Pendiente",

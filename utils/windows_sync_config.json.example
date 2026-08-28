@@ -7,5 +7,6 @@
   "SUPABASE_KEY": "tu_service_role_o_anon_key",
   "IMPORTA_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Validador\\Importa",
   "EXPORTA_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Validador\\Exporta",
-  "VENTAS_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Ventas"
+  "VENTAS_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Ventas",
+  "IMPORTA_PENDING_MAX_HOURS": 3
 }
