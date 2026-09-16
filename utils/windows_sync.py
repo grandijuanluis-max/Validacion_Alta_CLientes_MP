@@ -268,7 +268,11 @@ def load_config():
                     config[k] = v
             if config.get("SUPABASE_URL"):
                 config["SUPABASE_URL"] = str(config["SUPABASE_URL"]).strip().rstrip("/")
-                    
+            config = _normalize_supabase_url_in_config(config)
+            if config.get("SUPABASE_URL") and loaded.get("SUPABASE_URL") != config.get("SUPABASE_URL"):
+                loaded["SUPABASE_URL"] = config["SUPABASE_URL"]
+                needs_rewrite = True
+
             if needs_rewrite:
                 try:
                     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -287,6 +291,28 @@ def load_config():
         if k in config and config[k].startswith("enc:"):
             config[k] = decrypt_value(config[k])
             
+    config = _normalize_supabase_url_in_config(config)
+    return config
+
+
+def _normalize_supabase_url_in_config(config):
+    """Corrige errores frecuentes en SUPABASE_URL (ej. falta .co)."""
+    url = (config.get("SUPABASE_URL") or "").strip().rstrip("/")
+    if not url:
+        return config
+    import re
+
+    fixed = url
+    # https://xxxx.supabase  →  https://xxxx.supabase.co
+    if re.match(r"^https://[a-z0-9-]+\.supabase$", fixed, re.I):
+        fixed = fixed + ".co"
+        logger.warning(
+            "SUPABASE_URL corregida automáticamente (faltaba .co): %s → %s",
+            url,
+            fixed,
+        )
+    if fixed != url:
+        config["SUPABASE_URL"] = fixed
     return config
 
 
@@ -1349,7 +1375,7 @@ def main():
     args = parser.parse_args()
 
     logger.info("=========================================")
-    logger.info("Iniciando Sincronizador de Windows Server (build CLIENTESPA-local-v3)")
+    logger.info("Iniciando Sincronizador de Windows Server (build CLIENTESPA-local-v3.1)")
     logger.info("=========================================")
 
     config = load_config()
