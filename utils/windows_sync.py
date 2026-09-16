@@ -72,6 +72,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger("windows_sync")
 
+# Importadores empaquetados en el .exe (PyInstaller los incluye vía windows_sync.spec)
+try:
+    import dbi_clientes
+    import ventas_importer
+except ImportError:
+    dbi_clientes = None
+    ventas_importer = None
+
+
+def _resource_path(filename):
+    """Ruta a datos embebidos (onefile) o junto al exe/script."""
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        bundled = os.path.join(sys._MEIPASS, filename)
+        if os.path.isfile(bundled):
+            return bundled
+    return os.path.join(BASE_DIR, filename)
+
+
+def ensure_config_file():
+    """Crea windows_sync_config.json desde la plantilla si no existe."""
+    if os.path.exists(CONFIG_FILE):
+        return False
+    import shutil
+    src = _resource_path("windows_sync_config.json.example")
+    if os.path.isfile(src):
+        shutil.copy2(src, CONFIG_FILE)
+        logger.warning(
+            "Se creó %s desde la plantilla. Completá FTP_USER, FTP_PASS, SUPABASE_URL y SUPABASE_KEY.",
+            CONFIG_FILE,
+        )
+        return True
+    logger.info("No hay %s; se usará configuración embebida.", CONFIG_FILE)
+    return False
+
 
 def _module_search_dirs():
     dirs = [BASE_DIR, os.path.join(BASE_DIR, "utils")]
@@ -100,6 +134,8 @@ def _load_py_module_from_file(filename, module_name=None):
 
 
 def _import_clientespa_functions():
+    if dbi_clientes is not None:
+        return dbi_clientes.import_clientespa_to_supabase, dbi_clientes.scan_clientespa_metadata
     try:
         mod = _load_py_module_from_file("dbi_clientes.py", "dbi_clientes")
         return mod.import_clientespa_to_supabase, mod.scan_clientespa_metadata
@@ -108,24 +144,16 @@ def _import_clientespa_functions():
     try:
         from dbi_clientes_loader import import_clientespa_module
         return import_clientespa_module()
-    except ImportError:
-        pass
-    try:
-        from utils.dbi_clientes_loader import import_clientespa_module
-        return import_clientespa_module()
     except ImportError as e:
         raise ImportError(
-            "No se pudo cargar dbi_clientes. Copie dbi_clientes.py junto al .exe "
-            "o recompile con PyInstaller (ver scripts/build_windows_sync.md)."
+            "No se pudo cargar dbi_clientes. Recompile con utils\\compilar_sincronizador.bat "
+            "(windows_sync.spec)."
         ) from e
 
 
 def _import_ventas_dbi_function():
-    try:
-        mod = _load_py_module_from_file("ventas_importer.py", "ventas_importer")
-        return mod.import_ventas_dbi
-    except ImportError:
-        pass
+    if ventas_importer is not None:
+        return ventas_importer.import_ventas_dbi
     try:
         from ventas_importer_loader import import_ventas_module
         return import_ventas_module()
@@ -136,8 +164,8 @@ def _import_ventas_dbi_function():
         return import_ventas_module()
     except ImportError as e:
         raise ImportError(
-            "No se pudo cargar ventas_importer. Copie ventas_importer.py junto al .exe "
-            "o recompile con PyInstaller."
+            "No se pudo cargar ventas_importer. Recompile con utils\\compilar_sincronizador.bat "
+            "(windows_sync.spec)."
         ) from e
 
 
@@ -210,6 +238,7 @@ def decrypt_value(value: str) -> str:
 
 def load_config():
     """Carga la configuración desde el archivo JSON local aplicando cifrado/descifrado transparente."""
+    ensure_config_file()
     config = DEFAULT_CONFIG.copy()
     sensitive_keys = ["FTP_PASS", "SUPABASE_KEY"]
 
@@ -248,7 +277,7 @@ def load_config():
                     
         except Exception as e:
             logger.error(f"Error cargando windows_sync_config.json: {e}")
-    else:
+    elif not os.path.exists(CONFIG_FILE):
         logger.info("No se encontró archivo de configuración local. Usando configuración interna embebida.")
         
     # Asegurar que todas las credenciales sensibles queden descifradas en memoria para el programa

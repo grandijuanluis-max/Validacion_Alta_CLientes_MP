@@ -33,6 +33,7 @@ Thumbs.db
 *.log
 *.tmp
 *.spec
+!utils/windows_sync.spec
 build/
 dist/
 Subidos/
