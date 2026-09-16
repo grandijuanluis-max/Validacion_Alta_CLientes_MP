@@ -469,6 +469,8 @@ def sync_exporta_to_ftp_and_supabase(config):
             
             # Procesar datos
             logger.info("Procesando CLIENTESPA.DBI para Supabase...")
+            import_ok = False
+            presea_stats = {}
             try:
                 from dbi_clientes_loader import import_clientespa_module
                 import_clientespa_to_supabase, scan_clientespa_metadata = import_clientespa_module()
@@ -476,16 +478,17 @@ def sync_exporta_to_ftp_and_supabase(config):
                 presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
                 if presea_stats.get("error_apertura"):
                     raise RuntimeError(presea_stats["error_apertura"])
+                import_ok = True
                 log_exporta(
                     f"CLIENTESPA → Supabase: nuevos={presea_stats.get('importados', 0)} "
-                    f"actualizados={presea_stats.get('actualizados', 0)} "
+                    f"omitidos_existentes={presea_stats.get('omitidos_existentes', 0)} "
                     f"omitidos={presea_stats.get('omitidos', 0)} errores={presea_stats.get('errores', 0)}",
                     config,
                 )
                 logger.info(
-                    "Clientes Presea: nuevos=%s actualizados=%s omitidos=%s (app=%s) errores=%s",
+                    "Clientes Presea: nuevos=%s omitidos_existentes=%s omitidos=%s (app=%s) errores=%s",
                     presea_stats.get("importados", 0),
-                    presea_stats.get("actualizados", 0),
+                    presea_stats.get("omitidos_existentes", 0),
                     presea_stats.get("omitidos", 0),
                     presea_stats.get("omitidos_app", 0),
                     presea_stats.get("errores", 0),
@@ -494,21 +497,24 @@ def sync_exporta_to_ftp_and_supabase(config):
                 logger.error(f"Error importando clientes Presea: {presea_err}")
                 log_exporta(f"ERROR import CLIENTESPA: {presea_err}", config)
                 max_codigo, vendedores = 0, set()
-                with dbf.Table(path_clientes, codepage='cp1252') as table:
-                    table.open()
-                    for rec in table:
-                        try:
-                            codigo = int(rec.CODIGO)
-                            if codigo > max_codigo:
-                                max_codigo = codigo
-                        except Exception:
-                            pass
-                        try:
-                            vend = int(rec.VENDEDOR)
-                            if vend > 0:
-                                vendedores.add(vend)
-                        except Exception:
-                            pass
+                try:
+                    with dbf.Table(path_clientes, codepage='cp1252') as table:
+                        table.open()
+                        for rec in table:
+                            try:
+                                codigo = int(rec.CODIGO)
+                                if codigo > max_codigo:
+                                    max_codigo = codigo
+                            except Exception:
+                                pass
+                            try:
+                                vend = int(rec.VENDEDOR)
+                                if vend > 0:
+                                    vendedores.add(vend)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
             
             # Actualizar secuencia_codigo
             logger.info(f"Max codigo detectado: {max_codigo}. Actualizando secuencia en la DB...")
@@ -538,7 +544,7 @@ def sync_exporta_to_ftp_and_supabase(config):
                     supabase.table('usuarios').insert(data).execute()
                     logger.info(f"  [CREADO] Vendedor {vend} en Supabase")
             
-            # Mover archivo procesado a Subidos
+            # Mover archivo procesado a Subidos solo si el import terminó bien
             subidos_dir = os.path.join(exporta_dir, "Subidos")
             os.makedirs(subidos_dir, exist_ok=True)
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -546,13 +552,29 @@ def sync_exporta_to_ftp_and_supabase(config):
             subido_filename = f"{name}_{timestamp}{ext}"
             subido_path = os.path.join(subidos_dir, subido_filename)
             import shutil
-            try:
-                shutil.move(path_clientes, subido_path)
-                log_exporta(f"CLIENTESPA.DBI procesado y subido con éxito a Supabase. Archivo movido a Subidos/{subido_filename}", config)
-                logger.info(f"CLIENTESPA.DBI movido a Subidos/{subido_filename}")
-            except Exception as move_err:
-                logger.error(f"Error moviendo CLIENTESPA.DBI: {move_err}")
-                log_exporta(f"Error al mover CLIENTESPA.DBI: {move_err}", config)
+            if import_ok:
+                try:
+                    shutil.move(path_clientes, subido_path)
+                    base_cli, _ = os.path.splitext(path_clientes)
+                    for ext_memo in (".FPT", ".fpt", ".DBT", ".dbt"):
+                        sidecar = base_cli + ext_memo
+                        if os.path.exists(sidecar):
+                            dest = os.path.join(subidos_dir, f"{name}_{timestamp}{ext_memo}")
+                            shutil.move(sidecar, dest)
+                    log_exporta(
+                        f"CLIENTESPA.DBI procesado e importado a Supabase. Movido a Subidos/{subido_filename}",
+                        config,
+                    )
+                    logger.info(f"CLIENTESPA.DBI movido a Subidos/{subido_filename}")
+                except Exception as move_err:
+                    logger.error(f"Error moviendo CLIENTESPA.DBI: {move_err}")
+                    log_exporta(f"Error al mover CLIENTESPA.DBI: {move_err}", config)
+            else:
+                logger.warning(
+                    "CLIENTESPA.DBI NO se movió a Subidos porque falló el import. "
+                    "Queda en Exporta para reintento en la próxima corrida."
+                )
+                log_exporta("CLIENTESPA: import fallido; archivo conservado en Exporta.", config)
                     
         # --- 2. PROCESAR CODIGOSMP.DBI (Códigos Postales) ---
         path_codigos = os.path.join(exporta_dir, "CODIGOSMP.DBI")

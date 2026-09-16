@@ -355,10 +355,10 @@ def download_and_import():
             if presea_stats.get("error_apertura"):
                 raise RuntimeError(f"No se pudo leer CLIENTESPA.DBI: {presea_stats['error_apertura']}")
             logger.info(
-                "Clientes Presea FTP→Supabase: dbf=%s nuevos=%s actualizados=%s omitidos=%s (app=%s) errores=%s",
+                "Clientes Presea FTP→Supabase: dbf=%s nuevos=%s omitidos_existentes=%s omitidos=%s (app=%s) errores=%s",
                 presea_stats.get("total_dbf", 0),
                 presea_stats.get("importados", 0),
-                presea_stats.get("actualizados", 0),
+                presea_stats.get("omitidos_existentes", 0),
                 presea_stats.get("omitidos", 0),
                 presea_stats.get("omitidos_app", 0),
                 presea_stats.get("errores", 0),

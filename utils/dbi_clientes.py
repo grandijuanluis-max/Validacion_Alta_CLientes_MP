@@ -200,8 +200,65 @@ def _adapt_item_for_schema(item: dict, supports_presea: bool) -> dict:
     return {k: v for k, v in item.items() if k not in skip}
 
 
+def _load_existing_codigos_presea(supabase, log, supports_presea: bool = True) -> set[int]:
+    """Conjunto de códigos Presea (< 40000) ya presentes en Supabase."""
+    if not supports_presea:
+        return set()
+    existing: set[int] = set()
+    offset = 0
+    page = 1000
+    try:
+        while True:
+            res = (
+                supabase.table("clientes_pendientes")
+                .select("codigo")
+                .eq("origen", "presea")
+                .not_.is_("codigo", "null")
+                .order("codigo")
+                .range(offset, offset + page - 1)
+                .execute()
+            )
+            rows = res.data or []
+            for row in rows:
+                try:
+                    existing.add(int(float(row["codigo"])))
+                except (TypeError, ValueError):
+                    pass
+            if len(rows) < page:
+                break
+            offset += page
+    except Exception as e:
+        err = str(e).lower()
+        if "origen" in err and ("42703" in err or "does not exist" in err):
+            log.warning("Columna origen ausente; cargando códigos por rango < 40000.")
+            offset = 0
+            while True:
+                res = (
+                    supabase.table("clientes_pendientes")
+                    .select("codigo")
+                    .lt("codigo", PRESEA_CODIGO_MAX + 1)
+                    .not_.is_("codigo", "null")
+                    .order("codigo")
+                    .range(offset, offset + page - 1)
+                    .execute()
+                )
+                rows = res.data or []
+                for row in rows:
+                    try:
+                        existing.add(int(float(row["codigo"])))
+                    except (TypeError, ValueError):
+                        pass
+                if len(rows) < page:
+                    break
+                offset += page
+        else:
+            raise
+    log.info("Códigos Presea existentes en Supabase: %s", len(existing))
+    return existing
+
+
 def _load_existing_presea(supabase, log, supports_presea: bool = True) -> dict[int, str]:
-    """codigo → id UUID de clientes Presea ya en Supabase (codigo < 40000)."""
+    """codigo → id UUID (legacy; preferir _load_existing_codigos_presea para altas)."""
     if not supports_presea:
         return {}
     existing: dict[int, str] = {}
@@ -212,7 +269,9 @@ def _load_existing_presea(supabase, log, supports_presea: bool = True) -> dict[i
             res = (
                 supabase.table("clientes_pendientes")
                 .select("id, codigo")
+                .eq("origen", "presea")
                 .lt("codigo", PRESEA_CODIGO_MAX + 1)
+                .not_.is_("codigo", "null")
                 .order("codigo")
                 .range(offset, offset + page - 1)
                 .execute()
@@ -220,7 +279,7 @@ def _load_existing_presea(supabase, log, supports_presea: bool = True) -> dict[i
             rows = res.data or []
             for row in rows:
                 if row.get("codigo") is not None:
-                    existing[int(row["codigo"])] = row["id"]
+                    existing[int(float(row["codigo"]))] = row["id"]
             if len(rows) < page:
                 break
             offset += page
@@ -253,56 +312,51 @@ def _prepare_batch(items: list[dict]) -> list[dict]:
     return [{k: row.get(k) for k in keys} for row in cleaned]
 
 
-def _insert_batch(supabase, items: list[dict], log, use_upsert: bool = False) -> tuple[int, int]:
+def _insert_batch(supabase, items: list[dict], log) -> tuple[int, int]:
     """Inserta lote; en fallo reintenta fila a fila. Retorna (ok, fail)."""
     if not items:
         return 0, 0
     payload = _prepare_batch(items)
     tbl = supabase.table("clientes_pendientes")
     try:
-        if use_upsert and hasattr(tbl, "upsert"):
-            tbl.upsert(payload, on_conflict="codigo").execute()
-        else:
-            tbl.insert(payload).execute()
+        tbl.insert(payload).execute()
         return len(payload), 0
     except Exception as e_batch:
-        log.warning("Lote de %s falló (%s), reintentando individual...", len(items), str(e_batch)[:120])
+        log.warning("Lote de %s falló (%s), reintentando individual...", len(items), str(e_batch)[:200])
         ok = fail = 0
         for item in items:
-            if _insert_one(supabase, item, log, use_upsert=use_upsert):
+            if _insert_one(supabase, item, log):
                 ok += 1
             else:
                 fail += 1
         return ok, fail
 
 
-def _insert_one(supabase, item: dict, log, use_upsert: bool = False) -> bool:
+def _insert_one(supabase, item: dict, log) -> bool:
     """Inserta un registro; reintenta con columnas mínimas si falla."""
     payload = _clean_payload(item)
     tbl = supabase.table("clientes_pendientes")
     try:
-        if use_upsert and hasattr(tbl, "upsert"):
-            tbl.upsert(payload, on_conflict="codigo").execute()
-        else:
-            tbl.insert(payload).execute()
+        tbl.insert(payload).execute()
         return True
     except Exception as e1:
         err1 = str(e1)
+        if "duplicate key" in err1.lower() or "23505" in err1:
+            log.info("Insert omitido (código ya existe) codigo=%s", item.get("codigo"))
+            return False
         reduced = {k: v for k, v in payload.items() if k not in OPTIONAL_COLS}
         try:
-            if use_upsert and hasattr(tbl, "upsert"):
-                tbl.upsert(reduced, on_conflict="codigo").execute()
-            else:
-                tbl.insert(reduced).execute()
+            tbl.insert(reduced).execute()
             log.warning("Insert OK (payload reducido) codigo=%s: %s", item.get("codigo"), err1[:120])
             return True
-        except Exception:
+        except Exception as e2:
+            err2 = str(e2)
+            if "duplicate key" in err2.lower() or "23505" in err2:
+                log.info("Insert omitido (código ya existe) codigo=%s", item.get("codigo"))
+                return False
             minimal = {k: reduced[k] for k in MINIMAL_INSERT_COLS if k in reduced}
             try:
-                if use_upsert and hasattr(tbl, "upsert"):
-                    tbl.upsert(minimal, on_conflict="codigo").execute()
-                else:
-                    tbl.insert(minimal).execute()
+                tbl.insert(minimal).execute()
                 log.warning("Insert OK (mínimo) codigo=%s", item.get("codigo"))
                 return True
             except Exception as e3:
@@ -332,6 +386,7 @@ def _update_one(supabase, row_id: str, item: dict, log) -> bool:
 def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
     """
     Importa clientes con CODIGO < 40000 desde CLIENTESPA.DBI a clientes_pendientes.
+    Solo inserta códigos que aún no existen (origen presea); no actualiza existentes.
     """
     log = logger or logging.getLogger("dbi_clientes")
     stats = {
@@ -339,16 +394,23 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
         "importados": 0,
         "actualizados": 0,
         "omitidos": 0,
+        "omitidos_existentes": 0,
         "omitidos_app": 0,
         "omitidos_invalidos": 0,
         "errores": 0,
     }
 
     supports_presea = _schema_supports_presea(supabase, log)
+    if not supports_presea:
+        stats["error_apertura"] = (
+            "Faltan columnas origen/codigo en Supabase. Ejecute supabase_migration_presea_clientes.sql"
+        )
+        log.error(stats["error_apertura"])
+        return stats
 
-    existing_by_codigo = _load_existing_presea(supabase, log, supports_presea)
+    existing_codigos = _load_existing_codigos_presea(supabase, log, supports_presea)
     batch_insert: list[dict] = []
-    batch_update: list[tuple[str, dict]] = []
+    seen_in_file: set[int] = set()
 
     try:
         table = _open_clientespa_table(path_dbi)
@@ -371,34 +433,47 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
                     stats["omitidos_invalidos"] += 1
                 continue
 
-            codigo = item["codigo"]
-            item = _adapt_item_for_schema(item, supports_presea)
-            if codigo in existing_by_codigo:
-                batch_update.append((existing_by_codigo[codigo], item))
-            else:
-                batch_insert.append(item)
+            codigo = int(item["codigo"])
+            if codigo in seen_in_file:
+                stats["omitidos_existentes"] += 1
+                continue
+            seen_in_file.add(codigo)
+
+            if codigo in existing_codigos:
+                stats["omitidos_existentes"] += 1
+                continue
+
+            batch_insert.append(_adapt_item_for_schema(item, supports_presea))
     finally:
         table.close()
 
-    for row_id, item in batch_update:
-        if _update_one(supabase, row_id, item, log):
-            stats["actualizados"] += 1
-        else:
-            stats["errores"] += 1
-
     for i in range(0, len(batch_insert), BATCH_SIZE):
         chunk = batch_insert[i : i + BATCH_SIZE]
-        ok, fail = _insert_batch(supabase, chunk, log, use_upsert=supports_presea)
+        ok, fail = _insert_batch(supabase, chunk, log)
         stats["importados"] += ok
         stats["errores"] += fail
+        if ok == len(chunk) and fail == 0:
+            for row in chunk:
+                try:
+                    existing_codigos.add(int(row["codigo"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
         if ok and (i + BATCH_SIZE) % 500 == 0:
-            log.info("Progreso insert Presea: %s/%s", min(i + BATCH_SIZE, len(batch_insert)), len(batch_insert))
+            log.info(
+                "Progreso insert Presea: %s/%s",
+                min(i + BATCH_SIZE, len(batch_insert)),
+                len(batch_insert),
+            )
 
-    stats["importados_total"] = stats["importados"] + stats["actualizados"]
+    stats["importados_total"] = stats["importados"]
     log.info(
-        "Import Presea: dbf=%s nuevos=%s actualizados=%s omitidos=%s (app=%s) errores=%s",
-        stats["total_dbf"], stats["importados"], stats["actualizados"],
-        stats["omitidos"], stats["omitidos_app"], stats["errores"],
+        "Import Presea: dbf=%s nuevos=%s omitidos_existentes=%s omitidos=%s (app=%s) errores=%s",
+        stats["total_dbf"],
+        stats["importados"],
+        stats["omitidos_existentes"],
+        stats["omitidos"],
+        stats["omitidos_app"],
+        stats["errores"],
     )
     return stats
 
