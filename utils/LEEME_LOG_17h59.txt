@@ -1,0 +1,45 @@
+Diagnóstico del log 2026-09-16 17:59 (por qué no subió a Supabase)
+================================================================
+
+1) EXE VIEJO
+   El log dice:
+     "Detectado CLIENTESPA.DBI local. Subiendo al FTP..."
+   y NUNCA dice:
+     "Importando CLIENTESPA.DBI a Supabase" o "Procesando CLIENTESPA.DBI para Supabase"
+
+   El exe actual del repo importa a Supabase ANTES del FTP.
+   Solución: recompilar compilar_sincronizador.bat y reemplazar windows_sync.exe en el servidor.
+
+   Tras actualizar, al iniciar debe verse:
+     "build CLIENTESPA-local-v2"
+
+2) SUPABASE NO RESUELVE (getaddrinfo failed)
+   Aparece en exportación automática y ventas. El servidor Windows no puede resolver
+   el host de SUPABASE_URL (o la URL está mal en el JSON).
+
+   En windows_sync_config.json debe estar EXACTO:
+     "SUPABASE_URL": "https://sspjbsbuklqiekvxgdtc.supabase.co"
+   (sin /rest/v1/, sin espacios, sin URL del dashboard supabase.com)
+
+   En cmd del servidor probá:
+     nslookup sspjbsbuklqiekvxgdtc.supabase.co
+   Si falla → DNS/firewall: el server necesita salida HTTPS a Internet.
+
+   SUPABASE_KEY: service_role legacy eyJ... (más compatible) o sb_secret_ con exe nuevo.
+
+3) FTP (no bloquea import con exe nuevo)
+   192.168.100.2:59921 → "530 User cannot log in" = usuario/clave FTP incorrectos.
+   Poné en JSON:
+     "FTP_HOST": "192.168.100.2",
+     "FTP_PORT": 59921,
+     "FTP_USER": "ftppasina"   (o el usuario real),
+     "FTP_PASS": "..."
+
+   Con exe v2, aunque FTP falle, CLIENTESPA igual debería importarse si Supabase OK.
+
+Orden de trabajo
+----------------
+A) Corregir JSON (URL + KEY + FTP_HOST 192.168.100.2)
+B) nslookup supabase.co desde el server
+C) Nuevo windows_sync.exe (build CLIENTESPA-local-v2)
+D) Ejecutar exe → log debe mostrar "Supabase OK" y "CLIENTESPA → Supabase: nuevos=..."

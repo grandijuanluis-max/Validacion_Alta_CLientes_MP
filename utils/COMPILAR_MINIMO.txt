@@ -1,0 +1,32 @@
+NO alcanza con solo compilar_sincronizador.bat
+==============================================
+
+Opcion A (recomendada): en la PC Windows
+  git clone https://github.com/grandijuanluis-max/Validacion_Alta_CLientes_MP.git
+  cd Validacion_Alta_CLientes_MP\MP\utils
+  compilar_sincronizador.bat
+
+Opcion B: descargar ZIP del repo en GitHub, descomprimir y:
+  cd ...\MP\utils
+  compilar_sincronizador.bat
+
+Opcion C: copiar desde otra PC estas carpetas/archivos (misma estructura):
+
+  MP\modulos\
+      __init__.py
+      presea_db.py
+      ramos_utils.py
+      (y lo que importen esos modulos)
+
+  MP\utils\
+      compilar_sincronizador.bat
+      windows_sync.py
+      windows_sync.spec
+      dbi_clientes.py
+      ventas_importer.py
+      dbi_clientes_loader.py
+      ventas_importer_loader.py
+      windows_sync_config.json.example
+
+Al servidor Presea solo llevas el resultado:
+  MP\utils\windows_sync.exe

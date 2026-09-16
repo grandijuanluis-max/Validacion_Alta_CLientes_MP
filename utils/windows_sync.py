@@ -266,6 +266,8 @@ def load_config():
             for k, v in loaded.items():
                 if k not in sensitive_keys:
                     config[k] = v
+            if config.get("SUPABASE_URL"):
+                config["SUPABASE_URL"] = str(config["SUPABASE_URL"]).strip().rstrip("/")
                     
             if needs_rewrite:
                 try:
@@ -286,6 +288,68 @@ def load_config():
             config[k] = decrypt_value(config[k])
             
     return config
+
+
+def validate_config(config):
+    """Avisa en log si la config sigue siendo plantilla o Supabase no resuelve DNS."""
+    url = (config.get("SUPABASE_URL") or "").strip()
+    key = (config.get("SUPABASE_KEY") or "").strip()
+    placeholders = (
+        "TU_PROYECTO",
+        "tu_service_role",
+        "usuario_ftp",
+        "password_ftp",
+    )
+    for token in placeholders:
+        if token in url or token in key:
+            logger.error(
+                "Config incompleta: editá %s con URL y KEY reales de Supabase (no la plantilla).",
+                CONFIG_FILE,
+            )
+            break
+    if url.startswith("https://"):
+        host = url.replace("https://", "").split("/")[0].strip()
+        if host and "TU_PROYECTO" not in host:
+            import socket
+            try:
+                socket.gethostbyname(host)
+            except OSError as e:
+                logger.error(
+                    "SUPABASE_URL no resuelve DNS (%s): %s — revisá la URL en %s.",
+                    host,
+                    e,
+                    CONFIG_FILE,
+                )
+
+
+def _try_ftp_stor_backup(config, uploads, label="archivos"):
+    """
+    Sube archivos al FTP como respaldo. No lanza excepción: CLIENTESPA → Supabase es local.
+    uploads: lista de (ruta_local, nombre_remoto).
+    """
+    if not uploads:
+        return
+    ftp = None
+    try:
+        ftp = connect_ftp(config)
+        for local_path, remote_name in uploads:
+            with open(local_path, "rb") as f_up:
+                ftp.storbinary(f"STOR {remote_name}", f_up)
+            logger.info("Respaldo FTP: subido %s.", remote_name)
+        logger.info("Respaldo FTP (%s) OK.", label)
+    except Exception as e:
+        logger.warning(
+            "Respaldo FTP omitido (%s). La importación local a Supabase no depende del FTP: %s",
+            label,
+            e,
+        )
+    finally:
+        if ftp:
+            try:
+                ftp.quit()
+            except Exception:
+                pass
+
 
 def rotate_log_if_needed(log_path, backup_dir):
     """
@@ -350,17 +414,52 @@ def log_importa(message, config):
 
 def get_supabase_client(config):
     """Inicializa el cliente de Supabase usando la configuración."""
-    url = config.get("SUPABASE_URL")
-    key = config.get("SUPABASE_KEY")
+    url = (config.get("SUPABASE_URL") or "").strip().rstrip("/")
+    key = (config.get("SUPABASE_KEY") or "").strip()
     if not url or not key:
         logger.error("Error: Faltan las credenciales de Supabase (URL o KEY).")
         return None
     try:
         from supabase import create_client
+
+        # Sin ClientOptions: evita incompatibilidad entre versiones empaquetadas en PyInstaller
         return create_client(url, key)
     except Exception as e:
-        logger.error(f"Error al inicializar el cliente de Supabase: {e}")
+        err = str(e)
+        logger.error("Error al inicializar Supabase: %s", err)
+        if key.startswith("sb_secret_"):
+            logger.error(
+                "Clave sb_secret_ requiere supabase-py >= 2.16 en el .exe. "
+                "Recompilá con compilar_sincronizador.bat o usá legacy service_role (eyJ...) en SUPABASE_KEY."
+            )
+        elif "invalid" in err.lower() and "api" in err.lower():
+            logger.error(
+                "SUPABASE_KEY rechazada. Probá legacy service_role (pestaña Legacy en Supabase) "
+                "o regenerá la secret key."
+            )
         return None
+
+
+def probe_supabase(config) -> bool:
+    """Prueba URL/KEY antes de importar CLIENTESPA."""
+    client = get_supabase_client(config)
+    if client is None:
+        return False
+    try:
+        client.table("clientes_pendientes").select("id").limit(1).execute()
+        logger.info("Supabase OK: lectura en clientes_pendientes.")
+        return True
+    except Exception as e:
+        logger.error("Supabase conectó pero falló la consulta: %s", e)
+        err = str(e).lower()
+        if "401" in err or "invalid" in err or "jwt" in err:
+            logger.error(
+                "Credenciales incorrectas o clave incompatible con este .exe. "
+                "Usá service_role legacy (eyJ...) o recompilá el exe con supabase reciente."
+            )
+        if "origen" in err or "codigo" in err or "42703" in err:
+            logger.error("Ejecutá supabase_migration_presea_clientes.sql en el proyecto Supabase.")
+        return False
 
 def resolve_ftp_host(host):
     """
@@ -412,6 +511,16 @@ def resolve_ftp_host(host):
 
     return host
 
+def _is_private_host(host: str) -> bool:
+    h = (host or "").strip()
+    return (
+        h.startswith("192.168.")
+        or h.startswith("10.")
+        or h.startswith("172.16.")
+        or h in ("127.0.0.1", "localhost")
+    )
+
+
 def connect_ftp(config):
     """
     Establece conexión al FTP probando secuencialmente múltiples candidatos
@@ -420,12 +529,34 @@ def connect_ftp(config):
     """
     user = config.get("FTP_USER")
     passwd = config.get("FTP_PASS")
-    
+    user_host = (config.get("FTP_HOST") or "").strip()
+    try:
+        preferred_port = int(config.get("FTP_PORT") or 59921)
+    except (TypeError, ValueError):
+        preferred_port = 59921
+
+    if user_host:
+        try:
+            resolved = resolve_ftp_host(user_host)
+            logger.info(
+                "FTP configurado: %s:%s (usuario %s)",
+                resolved,
+                preferred_port,
+                user or "?",
+            )
+            ftp = FTP()
+            ftp.connect(resolved, preferred_port, timeout=8.0)
+            ftp.login(user, passwd)
+            logger.info("Conexión FTP OK (%s:%s)", resolved, preferred_port)
+            return ftp
+        except Exception as e:
+            logger.warning("FTP configurado falló (%s:%s): %s", user_host, preferred_port, e)
+            if _is_private_host(user_host) and not config.get("FTP_SCAN_FALLBACK"):
+                raise
+
     # Lista de hosts base
     base_hosts = []
-    
-    # 1. Configuración de usuario
-    user_host = config.get("FTP_HOST")
+
     if user_host:
         base_hosts.append((user_host, "Configuración del usuario"))
         
@@ -459,8 +590,11 @@ def connect_ftp(config):
     except Exception:
         pass
 
-    # Puertos a intentar para cada host
-    ports = [59921, 40093, 21]
+    # Puertos a intentar para cada host (priorizar puerto del JSON)
+    ports = [preferred_port]
+    for p in (59921, 40093, 21):
+        if p not in ports:
+            ports.append(p)
     
     tried = set()
     last_error = None
@@ -612,24 +746,7 @@ def sync_exporta_to_ftp_and_supabase(config):
         if path_clientes:
             logger.info("CLIENTESPA detectado en: %s", path_clientes)
             log_exporta(f"CLIENTESPA detectado: {path_clientes}", config)
-            logger.info("Detectado CLIENTESPA.DBI local. Subiendo al FTP (raíz del usuario FTP)...")
-            # Subir al FTP
-            ftp = connect_ftp(config)
-            with open(path_clientes, "rb") as f_up:
-                ftp.storbinary("STOR CLIENTESPA.DBI", f_up)
-            # Subir sidecar memo si existe (campo MEMO en el DBI)
-            base_cli, _ = os.path.splitext(path_clientes)
-            for ext in (".FPT", ".fpt", ".DBT", ".dbt"):
-                sidecar = base_cli + ext
-                if os.path.exists(sidecar):
-                    remote_name = "CLIENTESPA" + ext
-                    with open(sidecar, "rb") as f_memo:
-                        ftp.storbinary(f"STOR {remote_name}", f_memo)
-                    logger.info(f"Subido {remote_name} al FTP.")
-            logger.info("Subido CLIENTESPA.DBI al FTP.")
-            
-            # Procesar datos
-            logger.info("Procesando CLIENTESPA.DBI para Supabase...")
+            logger.info("Importando CLIENTESPA.DBI a Supabase (lectura local; FTP solo respaldo)...")
             import_ok = False
             presea_stats = {}
             try:
@@ -733,6 +850,15 @@ def sync_exporta_to_ftp_and_supabase(config):
                     "Queda en Exporta para reintento en la próxima corrida."
                 )
                 log_exporta("CLIENTESPA: import fallido; archivo conservado en Exporta.", config)
+
+            if import_ok:
+                base_cli, _ = os.path.splitext(path_clientes)
+                ftp_uploads = [(path_clientes, "CLIENTESPA.DBI")]
+                for ext in (".FPT", ".fpt", ".DBT", ".dbt"):
+                    sidecar = base_cli + ext
+                    if os.path.exists(sidecar):
+                        ftp_uploads.append((sidecar, "CLIENTESPA" + ext))
+                _try_ftp_stor_backup(config, ftp_uploads, label="CLIENTESPA")
         else:
             logger.warning(
                 "No hay CLIENTESPA.DBI en %s. Presea debe generarlo ahí; "
@@ -1212,24 +1338,47 @@ def auto_export_a_exportar_to_importa(config):
         return False
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Sincronizador Presea ↔ Supabase")
+    parser.add_argument(
+        "--solo-exporta",
+        action="store_true",
+        help="Solo importar CLIENTESPA/CODIGOSMP/ramo desde Exporta (sin FTP ni ventas)",
+    )
+    args = parser.parse_args()
+
     logger.info("=========================================")
-    logger.info("Iniciando Sincronizador de Windows Server")
+    logger.info("Iniciando Sincronizador de Windows Server (build CLIENTESPA-local-v3)")
     logger.info("=========================================")
-    
+
     config = load_config()
-    
-    # 0. Exportar clientes app pendientes de exportación
-    auto_export_a_exportar_to_importa(config)
-    
-    # 1. Ejecutar descarga desde FTP a carpeta local IMPORTA
-    sync_ftp_to_importa(config)
-    
-    # 2. Ejecutar subida de carpeta local EXPORTA al FTP e importar a Supabase
+    url = config.get("SUPABASE_URL") or ""
+    logger.info(
+        "Config activa: SUPABASE=%s | FTP=%s:%s | EXPORTA=%s",
+        url.replace("https://", "")[:60] if url else "(vacío)",
+        config.get("FTP_HOST"),
+        config.get("FTP_PORT"),
+        config.get("EXPORTA_DIR"),
+    )
+    validate_config(config)
+
+    if not probe_supabase(config):
+        logger.error(
+            "Supabase no disponible: no se importará CLIENTESPA. "
+            "Corregí SUPABASE_URL y SUPABASE_KEY en %s y volvé a ejecutar.",
+            CONFIG_FILE,
+        )
+
     sync_exporta_to_ftp_and_supabase(config)
-    
-    # 3. Importar ventas.dbi desde carpeta Ventas de Presea → Supabase
+    if args.solo_exporta:
+        logger.info("Modo --solo-exporta: fin.")
+        return
+
+    auto_export_a_exportar_to_importa(config)
+    sync_ftp_to_importa(config)
     sync_ventas_to_ftp_and_supabase(config)
-    
+
     logger.info("Proceso general del Servidor Windows finalizado.")
 
 if __name__ == "__main__":
