@@ -390,7 +390,7 @@ def download_and_import():
                         "email": email,
                         "password": password,
                         "role": "vendedor",
-                        "nombre_vendedor": f"Vendedor {vend}",
+                        "usuario": f"Vendedor {vend}",
                         "codigo_vendedor": vend,
                         "permiso_alta": True,
                         "permiso_validacion": False,

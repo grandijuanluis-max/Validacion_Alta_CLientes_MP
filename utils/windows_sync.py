@@ -18,6 +18,7 @@ import json
 import csv
 import datetime
 import logging
+import importlib.util
 from ftplib import FTP
 import dbf
 
@@ -70,6 +71,114 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("windows_sync")
+
+
+def _module_search_dirs():
+    dirs = [BASE_DIR, os.path.join(BASE_DIR, "utils")]
+    if PROJECT_ROOT and PROJECT_ROOT not in dirs:
+        dirs.append(PROJECT_ROOT)
+        dirs.append(os.path.join(PROJECT_ROOT, "utils"))
+    return dirs
+
+
+def _load_py_module_from_file(filename, module_name=None):
+    """Carga un .py desde el directorio del exe o utils/ (compatible con PyInstaller onefile)."""
+    mod_name = module_name or filename.replace(".py", "")
+    tried = []
+    for folder in _module_search_dirs():
+        path = os.path.join(folder, filename)
+        tried.append(path)
+        if not os.path.isfile(path):
+            continue
+        spec = importlib.util.spec_from_file_location(mod_name, path)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    raise ImportError(f"No se encontró {filename}. Buscado en: {tried}")
+
+
+def _import_clientespa_functions():
+    try:
+        mod = _load_py_module_from_file("dbi_clientes.py", "dbi_clientes")
+        return mod.import_clientespa_to_supabase, mod.scan_clientespa_metadata
+    except ImportError:
+        pass
+    try:
+        from dbi_clientes_loader import import_clientespa_module
+        return import_clientespa_module()
+    except ImportError:
+        pass
+    try:
+        from utils.dbi_clientes_loader import import_clientespa_module
+        return import_clientespa_module()
+    except ImportError as e:
+        raise ImportError(
+            "No se pudo cargar dbi_clientes. Copie dbi_clientes.py junto al .exe "
+            "o recompile con PyInstaller (ver scripts/build_windows_sync.md)."
+        ) from e
+
+
+def _import_ventas_dbi_function():
+    try:
+        mod = _load_py_module_from_file("ventas_importer.py", "ventas_importer")
+        return mod.import_ventas_dbi
+    except ImportError:
+        pass
+    try:
+        from ventas_importer_loader import import_ventas_module
+        return import_ventas_module()
+    except ImportError:
+        pass
+    try:
+        from utils.ventas_importer_loader import import_ventas_module
+        return import_ventas_module()
+    except ImportError as e:
+        raise ImportError(
+            "No se pudo cargar ventas_importer. Copie ventas_importer.py junto al .exe "
+            "o recompile con PyInstaller."
+        ) from e
+
+
+def _ensure_vendedor_presea(supabase, vend: int) -> None:
+    """Crea usuario vendedor si no existe; tolerante a columnas opcionales en Supabase."""
+    email = f"vendedor{vend}@presea.com"
+    res = supabase.table("usuarios").select("id").eq("email", email).execute()
+    if res.data:
+        return
+    payload = {
+        "email": email,
+        "password": f"clave{vend}",
+        "role": "vendedor",
+        "usuario": f"Vendedor {vend}",
+        "codigo_vendedor": vend,
+        "permiso_alta": True,
+        "permiso_validacion": False,
+        "permiso_exportados": True,
+    }
+    try:
+        supabase.table("usuarios").insert(payload).execute()
+        logger.info("  [CREADO] Vendedor %s en Supabase", vend)
+    except Exception as e1:
+        err = str(e1).lower()
+        if "nombre_vendedor" in err or "42703" in err or "pgrst204" in err:
+            payload.pop("usuario", None)
+            minimal = {
+                "email": email,
+                "password": f"clave{vend}",
+                "role": "vendedor",
+                "codigo_vendedor": vend,
+                "permiso_alta": True,
+            }
+            try:
+                supabase.table("usuarios").insert(minimal).execute()
+                logger.info("  [CREADO] Vendedor %s (payload mínimo)", vend)
+                return
+            except Exception as e2:
+                logger.warning("No se pudo crear vendedor %s: %s", vend, e2)
+        else:
+            logger.warning("No se pudo crear vendedor %s: %s", vend, e1)
 
 import base64
 
@@ -430,6 +539,22 @@ def sync_ftp_to_importa(config):
         log_importa(f"Error en descarga: {e}", config)
         return False
 
+def _resolve_exporta_file(exporta_dir, filename):
+    """Busca archivo en Exporta (nombre exacto o sin importar mayúsculas)."""
+    if not exporta_dir or not os.path.isdir(exporta_dir):
+        return None
+    direct = os.path.join(exporta_dir, filename)
+    if os.path.isfile(direct):
+        return direct
+    target = filename.lower()
+    try:
+        for name in os.listdir(exporta_dir):
+            if name.lower() == target:
+                return os.path.join(exporta_dir, name)
+    except OSError as e:
+        logger.warning("No se pudo listar %s: %s", exporta_dir, e)
+    return None
+
 def sync_exporta_to_ftp_and_supabase(config):
     """
     SUBIDA: Lee los archivos locales de la carpeta EXPORTA de Presea,
@@ -437,21 +562,28 @@ def sync_exporta_to_ftp_and_supabase(config):
     """
     logger.info("--- Iniciando proceso de lectura e importación desde EXPORTA local ---")
     exporta_dir = config.get("EXPORTA_DIR")
-    if not os.path.exists(exporta_dir):
+    logger.info("EXPORTA_DIR configurado: %s", exporta_dir)
+    if not exporta_dir or not os.path.exists(exporta_dir):
         logger.warning(f"La carpeta de exportación {exporta_dir} no existe. Omitiendo subida.")
+        log_exporta(f"ERROR: EXPORTA_DIR no existe: {exporta_dir}", config)
         return True
+
+    log_exporta(f"Inicio sync Exporta → FTP + Supabase (dir={exporta_dir})", config)
         
     supabase = get_supabase_client(config)
     if supabase is None:
         logger.error("No se puede sincronizar con la base de datos sin cliente Supabase.")
+        log_exporta("ERROR: Supabase no configurado (URL/KEY); no se importa CLIENTESPA.", config)
         return False
         
     ftp = None
     try:
         # --- 1. PROCESAR CLIENTESPA.DBI (Secuencia y Vendedores) ---
-        path_clientes = os.path.join(exporta_dir, "CLIENTESPA.DBI")
-        if os.path.exists(path_clientes):
-            logger.info("Detectado CLIENTESPA.DBI local. Subiendo al FTP...")
+        path_clientes = _resolve_exporta_file(exporta_dir, "CLIENTESPA.DBI")
+        if path_clientes:
+            logger.info("CLIENTESPA detectado en: %s", path_clientes)
+            log_exporta(f"CLIENTESPA detectado: {path_clientes}", config)
+            logger.info("Detectado CLIENTESPA.DBI local. Subiendo al FTP (raíz del usuario FTP)...")
             # Subir al FTP
             ftp = connect_ftp(config)
             with open(path_clientes, "rb") as f_up:
@@ -472,13 +604,25 @@ def sync_exporta_to_ftp_and_supabase(config):
             import_ok = False
             presea_stats = {}
             try:
-                from dbi_clientes_loader import import_clientespa_module
-                import_clientespa_to_supabase, scan_clientespa_metadata = import_clientespa_module()
+                import_clientespa_to_supabase, scan_clientespa_metadata = _import_clientespa_functions()
                 max_codigo, vendedores = scan_clientespa_metadata(path_clientes)
                 presea_stats = import_clientespa_to_supabase(supabase, path_clientes, logger=logger)
                 if presea_stats.get("error_apertura"):
                     raise RuntimeError(presea_stats["error_apertura"])
+                if presea_stats.get("errores", 0) > 0:
+                    raise RuntimeError(
+                        f"Import CLIENTESPA con {presea_stats['errores']} error(es); "
+                        f"nuevos={presea_stats.get('importados', 0)}, "
+                        f"pendientes={presea_stats.get('pendientes_insert', 0)}"
+                    )
                 import_ok = True
+                if presea_stats.get("importados", 0) == 0:
+                    logger.info(
+                        "Sin inserts nuevos: pendientes_insert=%s omitidos_existentes=%s total_dbf=%s",
+                        presea_stats.get("pendientes_insert", 0),
+                        presea_stats.get("omitidos_existentes", 0),
+                        presea_stats.get("total_dbf", 0),
+                    )
                 log_exporta(
                     f"CLIENTESPA → Supabase: nuevos={presea_stats.get('importados', 0)} "
                     f"omitidos_existentes={presea_stats.get('omitidos_existentes', 0)} "
@@ -527,22 +671,7 @@ def sync_exporta_to_ftp_and_supabase(config):
                 
             # Crear vendedores si no existen
             for vend in sorted(list(vendedores)):
-                email = f"vendedor{vend}@presea.com"
-                password = f"clave{vend}"
-                res = supabase.table('usuarios').select('id').eq('email', email).execute()
-                if not res.data:
-                    data = {
-                        "email": email,
-                        "password": password,
-                        "role": "vendedor",
-                        "nombre_vendedor": f"Vendedor {vend}",
-                        "codigo_vendedor": vend,
-                        "permiso_alta": True,
-                        "permiso_validacion": False,
-                        "permiso_exportados": True
-                    }
-                    supabase.table('usuarios').insert(data).execute()
-                    logger.info(f"  [CREADO] Vendedor {vend} en Supabase")
+                _ensure_vendedor_presea(supabase, vend)
             
             # Mover archivo procesado a Subidos solo si el import terminó bien
             subidos_dir = os.path.join(exporta_dir, "Subidos")
@@ -575,6 +704,19 @@ def sync_exporta_to_ftp_and_supabase(config):
                     "Queda en Exporta para reintento en la próxima corrida."
                 )
                 log_exporta("CLIENTESPA: import fallido; archivo conservado en Exporta.", config)
+        else:
+            logger.warning(
+                "No hay CLIENTESPA.DBI en %s. Presea debe generarlo ahí; "
+                "windows_sync NO lo baja del FTP (solo lo sube como respaldo).",
+                exporta_dir,
+            )
+            try:
+                names = [n for n in os.listdir(exporta_dir) if os.path.isfile(os.path.join(exporta_dir, n))]
+                if names:
+                    logger.info("Archivos en Exporta (raíz): %s", ", ".join(sorted(names)[:30]))
+            except OSError:
+                pass
+            log_exporta(f"CLIENTESPA.DBI no encontrado en {exporta_dir}", config)
                     
         # --- 2. PROCESAR CODIGOSMP.DBI (Códigos Postales) ---
         path_codigos = os.path.join(exporta_dir, "CODIGOSMP.DBI")
@@ -780,7 +922,7 @@ def sync_ventas_to_ftp_and_supabase(config):
         # Importador compartido (misma lógica que la app Streamlit)
         if BASE_DIR not in sys.path:
             sys.path.insert(0, BASE_DIR)
-        from ventas_importer import import_ventas_dbi
+        import_ventas_dbi = _import_ventas_dbi_function()
 
         stats = import_ventas_dbi(supabase, path_ventas, batch_size=1000, logger=logger)
         total_procesados = stats["importados"]

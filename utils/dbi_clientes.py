@@ -201,59 +201,32 @@ def _adapt_item_for_schema(item: dict, supports_presea: bool) -> dict:
 
 
 def _load_existing_codigos_presea(supabase, log, supports_presea: bool = True) -> set[int]:
-    """Conjunto de códigos Presea (< 40000) ya presentes en Supabase."""
+    """Códigos ERP (< 40000) ya presentes en clientes_pendientes (cualquier origen)."""
     if not supports_presea:
         return set()
     existing: set[int] = set()
     offset = 0
     page = 1000
-    try:
-        while True:
-            res = (
-                supabase.table("clientes_pendientes")
-                .select("codigo")
-                .eq("origen", "presea")
-                .not_.is_("codigo", "null")
-                .order("codigo")
-                .range(offset, offset + page - 1)
-                .execute()
-            )
-            rows = res.data or []
-            for row in rows:
-                try:
-                    existing.add(int(float(row["codigo"])))
-                except (TypeError, ValueError):
-                    pass
-            if len(rows) < page:
-                break
-            offset += page
-    except Exception as e:
-        err = str(e).lower()
-        if "origen" in err and ("42703" in err or "does not exist" in err):
-            log.warning("Columna origen ausente; cargando códigos por rango < 40000.")
-            offset = 0
-            while True:
-                res = (
-                    supabase.table("clientes_pendientes")
-                    .select("codigo")
-                    .lt("codigo", PRESEA_CODIGO_MAX + 1)
-                    .not_.is_("codigo", "null")
-                    .order("codigo")
-                    .range(offset, offset + page - 1)
-                    .execute()
-                )
-                rows = res.data or []
-                for row in rows:
-                    try:
-                        existing.add(int(float(row["codigo"])))
-                    except (TypeError, ValueError):
-                        pass
-                if len(rows) < page:
-                    break
-                offset += page
-        else:
-            raise
-    log.info("Códigos Presea existentes en Supabase: %s", len(existing))
+    while True:
+        res = (
+            supabase.table("clientes_pendientes")
+            .select("codigo")
+            .lt("codigo", PRESEA_CODIGO_MAX + 1)
+            .not_.is_("codigo", "null")
+            .order("codigo")
+            .range(offset, offset + page - 1)
+            .execute()
+        )
+        rows = res.data or []
+        for row in rows:
+            try:
+                existing.add(int(float(row["codigo"])))
+            except (TypeError, ValueError):
+                pass
+        if len(rows) < page:
+            break
+        offset += page
+    log.info("Códigos ERP (<40000) ya en Supabase: %s", len(existing))
     return existing
 
 
@@ -446,6 +419,14 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
             batch_insert.append(_adapt_item_for_schema(item, supports_presea))
     finally:
         table.close()
+
+    stats["pendientes_insert"] = len(batch_insert)
+    log.info(
+        "CLIENTESPA: leídos=%s → a insertar=%s (omitidos_existentes acumulados en loop=%s)",
+        stats["total_dbf"],
+        len(batch_insert),
+        stats["omitidos_existentes"],
+    )
 
     for i in range(0, len(batch_insert), BATCH_SIZE):
         chunk = batch_insert[i : i + BATCH_SIZE]
