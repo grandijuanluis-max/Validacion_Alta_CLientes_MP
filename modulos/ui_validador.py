@@ -5,6 +5,7 @@ from modulos.db import supabase
 from modulos.api_nosis import consultar_y_evaluar_nosis
 from modulos.presea_db import (
     fetch_app_clientes,
+    fetch_clientes_a_exportar,
     guardar_exportacion_app,
     leer_inicio_secuencia_app,
     resolver_codigos_app,
@@ -489,6 +490,7 @@ def render_clientes_pendientes():
                     st.error("❌ CUIT Socio 2 debe tener exactamente 11 dígitos.")
                 else:
                     datos_actualizados['estado'] = 'A Exportar'
+                    datos_actualizados['exportado_el'] = None
                     supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
                     st.session_state['validador_success'] = f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente."
                     if "tabla_pendientes" in st.session_state:
@@ -508,15 +510,14 @@ def render_clientes_pendientes():
             
         st.divider()
         # Mantenemos el botón de exportación masiva pero solo para los "A Exportar"
-        df_a_exportar = df[df['estado'] == 'A Exportar']
-        
         if st.button("Exportar todos los A Exportar", key="btn_export_all"):
-            if df_a_exportar.empty:
+            clientes_export_list = fetch_clientes_a_exportar(supabase)
+            if not clientes_export_list:
                 st.warning("No hay clientes en estado 'A Exportar'.")
             else:
                 numero_inicio = leer_inicio_secuencia_app(supabase)
                 clientes_export, ultimo_assigned = resolver_codigos_app(
-                    df_a_exportar.to_dict("records"), numero_inicio
+                    clientes_export_list, numero_inicio
                 )
                 df_export = pd.DataFrame(clientes_export)
 

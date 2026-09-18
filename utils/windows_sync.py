@@ -798,6 +798,7 @@ def sync_exporta_to_ftp_and_supabase(config):
                 log_exporta(
                     f"CLIENTESPA → Supabase: nuevos={presea_stats.get('importados', 0)} "
                     f"omitidos_existentes={presea_stats.get('omitidos_existentes', 0)} "
+                    f"omitidos_cuit={presea_stats.get('omitidos_cuit_duplicado', 0)} "
                     f"omitidos={presea_stats.get('omitidos', 0)} errores={presea_stats.get('errores', 0)}",
                     config,
                 )
@@ -834,12 +835,8 @@ def sync_exporta_to_ftp_and_supabase(config):
             
             # Actualizar secuencia_codigo
             logger.info(f"Max codigo detectado: {max_codigo}. Actualizando secuencia en la DB...")
-            res_seq = supabase.table('secuencia_codigo').select('id').execute()
-            if res_seq.data:
-                id_seq = res_seq.data[0]['id']
-                supabase.table('secuencia_codigo').update({'ultimo_valor': max(39999, max_codigo)}).eq('id', id_seq).execute()
-            else:
-                supabase.table('secuencia_codigo').insert({'id': 1, 'ultimo_valor': max(39999, max_codigo)}).execute()
+            from modulos.presea_db import actualizar_secuencia_erp
+            actualizar_secuencia_erp(supabase, max_codigo)
                 
             # Crear vendedores si no existen
             for vend in sorted(list(vendedores)):
@@ -1175,29 +1172,40 @@ def auto_export_a_exportar_to_importa(config):
             return str(val) if val is not None else ""
 
     try:
-        # 1. Buscar clientes app con estado 'A Exportar'
-        response = (
-            supabase.table("clientes_pendientes")
-            .select("*")
-            .eq("estado", "A Exportar")
-            .eq("origen", "app")
-            .execute()
-        )
-        if not response.data:
-            logger.info("No hay clientes en estado 'A Exportar' para procesar automáticamente.")
-            return True
-
-        clientes_a_exportar = response.data
-        logger.info(f"Detectados {len(clientes_a_exportar)} clientes app para exportar automáticamente.")
-
         from modulos.presea_db import (
+            fetch_clientes_a_exportar,
             guardar_exportacion_app,
             leer_inicio_secuencia_app,
             resolver_codigos_app,
         )
 
+        clientes_a_exportar = fetch_clientes_a_exportar(supabase)
+        if not clientes_a_exportar:
+            logger.info("No hay clientes en estado 'A Exportar' para procesar automáticamente.")
+            return True
+
+        logger.info(
+            "Detectados %s clientes app para exportar automáticamente.",
+            len(clientes_a_exportar),
+        )
+        for row in clientes_a_exportar:
+            logger.info(
+                "  → A Exportar: codigo=%s cuit=%s nombre=%s id=%s",
+                row.get("codigo"),
+                row.get("cuit"),
+                (row.get("nombre") or "")[:40],
+                row.get("id"),
+            )
+
         numero_inicio = leer_inicio_secuencia_app(supabase)
         clientes_a_exportar, ultimo_assigned = resolver_codigos_app(clientes_a_exportar, numero_inicio)
+        for row in clientes_a_exportar:
+            logger.info(
+                "  → Export DBI: codigo=%s cuit=%s nombre=%s",
+                row.get("codigo"),
+                row.get("cuit"),
+                (row.get("nombre") or "")[:40],
+            )
 
         # 2. Definir directorio de salida IMPORTA
         importa_dir = config.get("IMPORTA_DIR")

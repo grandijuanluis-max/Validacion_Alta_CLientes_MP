@@ -15,6 +15,12 @@ from typing import Optional
 
 import dbf
 
+try:
+    from modulos.cuit_utils import cuit_real_desde_campo_erp, normalizar_cuit_digitos
+except ImportError:
+    cuit_real_desde_campo_erp = None
+    normalizar_cuit_digitos = None
+
 CLIENTESPA_SCHEMA = (
     "CODIGO N(6,0); NOMBRE C(30); N_FANTASIA C(30); CUIT N(12,0); "
     "DOMICILIO C(50); LOCALIDAD C(35); C_POSTAL C(50); PROVINCIA C(25); "
@@ -200,6 +206,50 @@ def _adapt_item_for_schema(item: dict, supports_presea: bool) -> dict:
     return {k: v for k, v in item.items() if k not in skip}
 
 
+def _normalizar_cuit(cuit) -> str | None:
+    if normalizar_cuit_digitos is not None:
+        return normalizar_cuit_digitos(cuit)
+    digits = "".join(c for c in str(cuit) if c.isdigit())
+    if not digits or set(digits) == {"0"}:
+        return None
+    if len(digits) < 11:
+        digits = digits.zfill(11)
+    elif len(digits) > 11:
+        digits = digits[-11:]
+    return digits if len(digits) == 11 else None
+
+
+def _cuit_desde_registro_erp(rec) -> str | None:
+    """Solo CUIT real informado en Presea (no placeholder generado por código)."""
+    if cuit_real_desde_campo_erp is not None:
+        return cuit_real_desde_campo_erp(_field(rec, "CUIT"))
+    return _normalizar_cuit(_field(rec, "CUIT"))
+
+
+def _load_existing_cuit_digits(supabase, log) -> set[str]:
+    """CUIT normalizados ya presentes en clientes_pendientes (app y presea)."""
+    existing: set[str] = set()
+    offset = 0
+    page = 1000
+    while True:
+        res = (
+            supabase.table("clientes_pendientes")
+            .select("cuit")
+            .range(offset, offset + page - 1)
+            .execute()
+        )
+        rows = res.data or []
+        for row in rows:
+            d = _normalizar_cuit(row.get("cuit"))
+            if d:
+                existing.add(d)
+        if len(rows) < page:
+            break
+        offset += page
+    log.info("CUIT distintos ya en Supabase (clientes_pendientes): %s", len(existing))
+    return existing
+
+
 def _load_existing_codigos_presea(supabase, log, supports_presea: bool = True) -> set[int]:
     """Códigos ERP (< 40000) ya presentes en clientes_pendientes (cualquier origen)."""
     if not supports_presea:
@@ -370,6 +420,7 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
         "omitidos_existentes": 0,
         "omitidos_app": 0,
         "omitidos_invalidos": 0,
+        "omitidos_cuit_duplicado": 0,
         "errores": 0,
     }
 
@@ -382,8 +433,10 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
         return stats
 
     existing_codigos = _load_existing_codigos_presea(supabase, log, supports_presea)
+    existing_cuits = _load_existing_cuit_digits(supabase, log)
     batch_insert: list[dict] = []
     seen_in_file: set[int] = set()
+    seen_cuits_in_file: set[str] = set()
 
     try:
         table = _open_clientespa_table(path_dbi)
@@ -416,6 +469,18 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
                 stats["omitidos_existentes"] += 1
                 continue
 
+            cuit_digits = _cuit_desde_registro_erp(rec)
+            if cuit_digits:
+                if cuit_digits in existing_cuits or cuit_digits in seen_cuits_in_file:
+                    stats["omitidos_cuit_duplicado"] += 1
+                    log.info(
+                        "CLIENTESPA omitido por CUIT duplicado: codigo=%s cuit=%s",
+                        codigo,
+                        cuit_digits,
+                    )
+                    continue
+                seen_cuits_in_file.add(cuit_digits)
+
             batch_insert.append(_adapt_item_for_schema(item, supports_presea))
     finally:
         table.close()
@@ -439,6 +504,9 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
                     existing_codigos.add(int(row["codigo"]))
                 except (KeyError, TypeError, ValueError):
                     pass
+                d = _normalizar_cuit(row.get("cuit"))
+                if d:
+                    existing_cuits.add(d)
         if ok and (i + BATCH_SIZE) % 500 == 0:
             log.info(
                 "Progreso insert Presea: %s/%s",
@@ -448,10 +516,12 @@ def import_clientespa_to_supabase(supabase, path_dbi: str, logger=None) -> dict:
 
     stats["importados_total"] = stats["importados"]
     log.info(
-        "Import Presea: dbf=%s nuevos=%s omitidos_existentes=%s omitidos=%s (app=%s) errores=%s",
+        "Import Presea: dbf=%s nuevos=%s omitidos_existentes=%s omitidos_cuit=%s "
+        "omitidos=%s (app=%s) errores=%s",
         stats["total_dbf"],
         stats["importados"],
         stats["omitidos_existentes"],
+        stats["omitidos_cuit_duplicado"],
         stats["omitidos"],
         stats["omitidos_app"],
         stats["errores"],

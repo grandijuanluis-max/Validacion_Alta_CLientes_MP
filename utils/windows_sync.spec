@@ -20,6 +20,7 @@ a = Analysis(
         "ventas_importer_loader",
         "modulos.presea_db",
         "modulos.ramos_utils",
+        "modulos.cuit_utils",
         "supabase",
         "httpx",
         "httpcore",

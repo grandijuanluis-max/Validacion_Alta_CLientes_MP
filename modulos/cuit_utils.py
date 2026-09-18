@@ -19,6 +19,11 @@ def normalizar_cuit_digitos(cuit) -> str | None:
     return digits if len(digits) == 11 else None
 
 
+def cuit_real_desde_campo_erp(val) -> str | None:
+    """CUIT del DBF Presea antes de placeholders; None si falta o es inválido."""
+    return normalizar_cuit_digitos(val)
+
+
 def formatear_cuit(cuit_digitos: str) -> str:
     return f"{cuit_digitos[:2]}-{cuit_digitos[2:10]}-{cuit_digitos[10]}"
 

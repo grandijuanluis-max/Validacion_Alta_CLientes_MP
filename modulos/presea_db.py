@@ -22,11 +22,58 @@ def _parse_codigo_app(val) -> int | None:
         return None
 
 
+def _max_codigo_app_en_db(supabase) -> int:
+    """Mayor código app (>= 40000) ya persistido en clientes_pendientes."""
+    try:
+        res = (
+            supabase.table("clientes_pendientes")
+            .select("codigo")
+            .eq("origen", "app")
+            .gte("codigo", APP_CODIGO_MIN)
+            .order("codigo", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data and res.data[0].get("codigo") is not None:
+            return int(float(res.data[0]["codigo"]))
+    except Exception:
+        pass
+    return APP_CODIGO_MIN - 1
+
+
 def leer_inicio_secuencia_app(supabase) -> int:
-    """Próximo código disponible para altas web (>= 40000)."""
+    """Próximo código disponible para altas web (>= 40000). No retrocede por sync ERP."""
     res = supabase.table("secuencia_codigo").select("ultimo_valor").eq("id", 1).execute()
-    ultimo = 0 if not res.data else int(res.data[0].get("ultimo_valor") or 0)
-    return max(APP_CODIGO_MIN, ultimo + 1)
+    ultimo_tabla = 0 if not res.data else int(res.data[0].get("ultimo_valor") or 0)
+    ultimo_db = _max_codigo_app_en_db(supabase)
+    base = max(ultimo_tabla, ultimo_db, APP_CODIGO_MIN - 1)
+    return max(APP_CODIGO_MIN, base + 1)
+
+
+def fetch_clientes_a_exportar(supabase) -> list[dict]:
+    """Clientes app listos para exportar (orden: más recientes primero)."""
+    query = (
+        supabase.table("clientes_pendientes")
+        .select("*")
+        .eq("estado", "A Exportar")
+        .eq("origen", "app")
+        .order("created_at", desc=True)
+    )
+    return _fetch_paginated(query)
+
+
+def actualizar_secuencia_erp(supabase, max_codigo_erp: int) -> None:
+    """
+    Actualiza piso ERP (< 40000) en secuencia_codigo sin bajar códigos app ya usados (>= 40000).
+    """
+    piso_erp = max(39999, int(max_codigo_erp or 0))
+    res = supabase.table("secuencia_codigo").select("id, ultimo_valor").eq("id", 1).execute()
+    if res.data:
+        actual = int(res.data[0].get("ultimo_valor") or 0)
+        nuevo = max(actual, piso_erp)
+        supabase.table("secuencia_codigo").update({"ultimo_valor": nuevo}).eq("id", 1).execute()
+    else:
+        supabase.table("secuencia_codigo").insert({"id": 1, "ultimo_valor": piso_erp}).execute()
 
 
 def resolver_codigos_app(clientes: list[dict], numero_inicio: int) -> tuple[list[dict], int]:

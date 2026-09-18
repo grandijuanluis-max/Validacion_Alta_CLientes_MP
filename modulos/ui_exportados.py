@@ -355,7 +355,10 @@ def render_exportados_dashboard():
             if st.button("🔄 Volver a Exportar este Cliente", type="primary", use_container_width=True, key=f"re_export_{cuit_seleccionado}"):
                 try:
                     # Cambiar estado a 'A Exportar' en Supabase para permitir volver a exportar
-                    supabase.table('clientes_pendientes').update({'estado': 'A Exportar'}).eq('id', str(original_client_data['id'])).execute()
+                    supabase.table('clientes_pendientes').update({
+                        'estado': 'A Exportar',
+                        'exportado_el': None,
+                    }).eq('id', str(original_client_data['id'])).execute()
                     st.success("🎉 Cliente marcado para volver a exportar de forma exitosa. Ahora figurará en la sección de 'Validación de Clientes'.")
                     st.rerun()
                 except Exception as ex_err:
