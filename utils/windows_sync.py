@@ -564,6 +564,56 @@ def _is_private_host(host: str) -> bool:
     )
 
 
+def _parse_ftp_hosts_list(raw) -> list[str]:
+    """Lista de hosts desde JSON array o string 'host1, host2'."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    if isinstance(raw, (list, tuple)):
+        out: list[str] = []
+        for item in raw:
+            if item is None:
+                continue
+            s = str(item).strip()
+            if s:
+                out.append(s)
+        return out
+    return []
+
+
+def configured_ftp_hosts(config) -> list[tuple[str, str]]:
+    """
+    Candidatos FTP en orden: FTP_HOST + FTP_HOSTS (sin duplicados).
+    Ej.: DNS público, IP fija, IP LAN del servidor FTP.
+    """
+    ordered: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(host: str, label: str) -> None:
+        h = (host or "").strip()
+        if not h:
+            return
+        key = h.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append((h, label))
+
+    add(config.get("FTP_HOST") or "", "FTP_HOST")
+    for i, h in enumerate(_parse_ftp_hosts_list(config.get("FTP_HOSTS"))):
+        add(h, f"FTP_HOSTS[{i}]")
+
+    return ordered
+
+
+def _try_ftp_connect(resolved_host: str, port: int, user, passwd, timeout: float):
+    ftp = FTP()
+    ftp.connect(resolved_host, port, timeout=timeout)
+    ftp.login(user, passwd)
+    return ftp
+
+
 def connect_ftp(config):
     """
     Establece conexión al FTP probando secuencialmente múltiples candidatos
@@ -572,47 +622,58 @@ def connect_ftp(config):
     """
     user = config.get("FTP_USER")
     passwd = config.get("FTP_PASS")
-    user_host = (config.get("FTP_HOST") or "").strip()
     try:
         preferred_port = int(config.get("FTP_PORT") or 59921)
     except (TypeError, ValueError):
         preferred_port = 59921
 
-    if user_host:
+    configured = configured_ftp_hosts(config)
+    last_error = None
+    tried_resolved: set[tuple[str, int]] = set()
+
+    for host_cand, desc in configured:
         try:
-            resolved = resolve_ftp_host(user_host)
-            logger.info(
-                "FTP configurado: %s:%s (usuario %s)",
-                resolved,
-                preferred_port,
-                user or "?",
-            )
-            ftp = FTP()
-            ftp.connect(resolved, preferred_port, timeout=8.0)
-            ftp.login(user, passwd)
-            logger.info("Conexión FTP OK (%s:%s)", resolved, preferred_port)
+            resolved = resolve_ftp_host(host_cand)
+        except Exception:
+            resolved = host_cand
+        key = (resolved, preferred_port)
+        if key in tried_resolved:
+            continue
+        tried_resolved.add(key)
+        timeout_val = 8.0 if not _is_private_host(resolved) else 4.0
+        logger.info(
+            "Probando %s: %s:%s (usuario %s, timeout %.0fs)",
+            desc,
+            resolved,
+            preferred_port,
+            user or "?",
+            timeout_val,
+        )
+        try:
+            ftp = _try_ftp_connect(resolved, preferred_port, user, passwd, timeout_val)
+            logger.info("Conexión FTP OK vía %s (%s:%s)", desc, resolved, preferred_port)
             return ftp
         except Exception as e:
-            logger.warning("FTP configurado falló (%s:%s): %s", user_host, preferred_port, e)
-            if _is_private_host(user_host) and not config.get("FTP_SCAN_FALLBACK"):
-                raise
-            if not config.get("FTP_SCAN_FALLBACK", False):
-                logger.error(
-                    "No se pudo conectar al FTP configurado y FTP_SCAN_FALLBACK=false. "
-                    "Los archivos subidos desde la app (Clientes_web.dbi) no bajarán a Importa. "
-                    "En %s usá FTP_HOST alcanzable desde ESTE servidor (IP LAN, ej. 192.168.100.2) "
-                    "o activá FTP_SCAN_FALLBACK=true para probar otros hosts.",
-                    CONFIG_FILE,
-                )
-                raise
+            last_error = e
+            logger.warning("Fallo %s (%s:%s): %s", desc, resolved, preferred_port, e)
 
-    # Lista de hosts base
-    base_hosts = []
+    if configured and not config.get("FTP_SCAN_FALLBACK", False):
+        tried_labels = ", ".join(h for h, _ in configured)
+        logger.error(
+            "No se pudo conectar a ningún host de la lista (%s) en puerto %s. "
+            "Agregá alternativas en FTP_HOSTS en %s o FTP_SCAN_FALLBACK=true para barrido automático.",
+            tried_labels,
+            preferred_port,
+            CONFIG_FILE,
+        )
+        if last_error:
+            raise last_error
+        raise Exception("No hay hosts FTP configurados.")
 
-    if user_host:
-        base_hosts.append((user_host, "Configuración del usuario"))
-        
-    # 2. FTP Público (DNS y puerto oficial)
+    # Lista de hosts base (barrido legacy; los de FTP_HOSTS ya se probaron arriba)
+    base_hosts: list[tuple[str, str]] = list(configured)
+
+    # FTP Público (DNS y puerto oficial)
     base_hosts.append(("messina.dns-dns.com", "FTP Público (DNS)"))
     
     # 3. FTP Público (IP fija de respaldo y puerto oficial)
@@ -648,8 +709,7 @@ def connect_ftp(config):
         if p not in ports:
             ports.append(p)
     
-    tried = set()
-    last_error = None
+    tried = set(tried_resolved)
     
     for host_cand, desc in base_hosts:
         # Intentar resolver DNS si aplica
@@ -1483,11 +1543,14 @@ def main():
 
     config = load_config()
     url = config.get("SUPABASE_URL") or ""
+    ftp_hosts = configured_ftp_hosts(config)
+    ftp_hosts_preview = ", ".join(h for h, _ in ftp_hosts) if ftp_hosts else "(ninguno)"
     logger.info(
-        "Config activa: SUPABASE=%s | FTP=%s:%s | EXPORTA=%s | IMPORTA=%s",
+        "Config activa: SUPABASE=%s | FTP=%s:%s | hosts=%s | EXPORTA=%s | IMPORTA=%s",
         url.replace("https://", "")[:60] if url else "(vacío)",
         config.get("FTP_HOST"),
         config.get("FTP_PORT"),
+        ftp_hosts_preview,
         config.get("EXPORTA_DIR"),
         config.get("IMPORTA_DIR"),
     )
