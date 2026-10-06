@@ -18,6 +18,7 @@ import json
 import csv
 import datetime
 import logging
+import importlib
 import importlib.util
 from ftplib import FTP
 import dbf
@@ -50,6 +51,10 @@ if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+    if sys._MEIPASS not in sys.path:
+        sys.path.insert(0, sys._MEIPASS)
 
 # Asegurar imports locales (dbi_clientes, ventas_importer) y módulos del proyecto
 if BASE_DIR not in sys.path:
@@ -109,6 +114,8 @@ def ensure_config_file():
 
 def _module_search_dirs():
     dirs = [BASE_DIR, os.path.join(BASE_DIR, "utils")]
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        dirs.insert(0, sys._MEIPASS)
     if PROJECT_ROOT and PROJECT_ROOT not in dirs:
         dirs.append(PROJECT_ROOT)
         dirs.append(os.path.join(PROJECT_ROOT, "utils"))
@@ -137,6 +144,11 @@ def _import_clientespa_functions():
     if dbi_clientes is not None:
         return dbi_clientes.import_clientespa_to_supabase, dbi_clientes.scan_clientespa_metadata
     try:
+        mod = importlib.import_module("dbi_clientes")
+        return mod.import_clientespa_to_supabase, mod.scan_clientespa_metadata
+    except ImportError:
+        pass
+    try:
         mod = _load_py_module_from_file("dbi_clientes.py", "dbi_clientes")
         return mod.import_clientespa_to_supabase, mod.scan_clientespa_metadata
     except ImportError:
@@ -154,6 +166,11 @@ def _import_clientespa_functions():
 def _import_ventas_dbi_function():
     if ventas_importer is not None:
         return ventas_importer.import_ventas_dbi
+    try:
+        mod = importlib.import_module("ventas_importer")
+        return mod.import_ventas_dbi
+    except ImportError:
+        pass
     try:
         from ventas_importer_loader import import_ventas_module
         return import_ventas_module()
@@ -579,6 +596,15 @@ def connect_ftp(config):
             logger.warning("FTP configurado falló (%s:%s): %s", user_host, preferred_port, e)
             if _is_private_host(user_host) and not config.get("FTP_SCAN_FALLBACK"):
                 raise
+            if not config.get("FTP_SCAN_FALLBACK", False):
+                logger.error(
+                    "No se pudo conectar al FTP configurado y FTP_SCAN_FALLBACK=false. "
+                    "Los archivos subidos desde la app (Clientes_web.dbi) no bajarán a Importa. "
+                    "En %s usá FTP_HOST alcanzable desde ESTE servidor (IP LAN, ej. 192.168.100.2) "
+                    "o activá FTP_SCAN_FALLBACK=true para probar otros hosts.",
+                    CONFIG_FILE,
+                )
+                raise
 
     # Lista de hosts base
     base_hosts = []
@@ -721,7 +747,24 @@ def sync_ftp_to_importa(config):
                 logger.debug(f"El archivo {f} no está en el FTP.")
                 
         ftp.quit()
-        logger.info(f"Descarga finalizada. Se guardaron {descargados_count} archivos en {importa_dir}.")
+        if descargados_count == 0:
+            logger.warning(
+                "FTP OK pero no había Clientes_web.dbi / .fpt / domicilios_entrega.txt en la raíz. "
+                "Si exportaste desde el Validador web, confirmá que la subida FTP fue exitosa."
+            )
+            if ftp_files:
+                preview = ", ".join(ftp_files[:20])
+                logger.info("Archivos visibles en FTP (%s): %s", len(ftp_files), preview)
+        else:
+            for f in archivos_a_descargar:
+                p = os.path.join(importa_dir, f)
+                if os.path.isfile(p):
+                    logger.info("Importa local: %s", p)
+        logger.info(
+            "Descarga finalizada. Se guardaron %s archivos en %s.",
+            descargados_count,
+            importa_dir,
+        )
         return True
     except Exception as e:
         logger.error(f"Error en el proceso de descarga desde FTP: {e}")
@@ -1395,6 +1438,10 @@ def auto_export_a_exportar_to_importa(config):
 
         log_importa(f"Procesada exportación automática de {len(clientes_a_exportar)} clientes exitosamente (Cierre del día).", config)
         logger.info(f"Exportación automática finalizada con éxito. Códigos asignados hasta {ultimo_assigned}.")
+        for f in archivos_generados:
+            p = os.path.join(importa_dir, f)
+            if os.path.isfile(p):
+                logger.info("Importa local (auto-export): %s", p)
 
         # 7. Subir copias al FTP de respaldo
         ftp = None
@@ -1431,17 +1478,18 @@ def main():
     args = parser.parse_args()
 
     logger.info("=========================================")
-    logger.info("Iniciando Sincronizador de Windows Server (build CLIENTESPA-local-v3.1)")
+    logger.info("Iniciando Sincronizador de Windows Server (build CLIENTESPA-local-v3.2)")
     logger.info("=========================================")
 
     config = load_config()
     url = config.get("SUPABASE_URL") or ""
     logger.info(
-        "Config activa: SUPABASE=%s | FTP=%s:%s | EXPORTA=%s",
+        "Config activa: SUPABASE=%s | FTP=%s:%s | EXPORTA=%s | IMPORTA=%s",
         url.replace("https://", "")[:60] if url else "(vacío)",
         config.get("FTP_HOST"),
         config.get("FTP_PORT"),
         config.get("EXPORTA_DIR"),
+        config.get("IMPORTA_DIR"),
     )
     validate_config(config)
 
@@ -1452,13 +1500,15 @@ def main():
             CONFIG_FILE,
         )
 
-    sync_exporta_to_ftp_and_supabase(config)
     if args.solo_exporta:
+        sync_exporta_to_ftp_and_supabase(config)
         logger.info("Modo --solo-exporta: fin.")
         return
 
+    # Importa primero (cola A Exportar + bajada FTP de exports hechos en la app web).
     auto_export_a_exportar_to_importa(config)
     sync_ftp_to_importa(config)
+    sync_exporta_to_ftp_and_supabase(config)
     sync_ventas_to_ftp_and_supabase(config)
 
     logger.info("Proceso general del Servidor Windows finalizado.")

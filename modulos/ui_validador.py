@@ -529,9 +529,17 @@ def render_clientes_pendientes():
                 # Intentar subir automáticamente al FTP
                 ftp_success, ftp_msg = upload_exports()
                 if ftp_success:
-                    st.session_state['validador_success'] = f"Exportación exitosa. Archivos generados y subidos al FTP: {ftp_msg}"
+                    st.session_state['validador_success'] = (
+                        f"Exportación exitosa. Archivos en FTP: {ftp_msg}. "
+                        "En el servidor Presea, windows_sync.exe debe bajarlos a IMPORTA "
+                        "(mismo FTP_HOST alcanzable desde la LAN del servidor)."
+                    )
                 else:
-                    st.session_state['validador_warning'] = f"Exportación completada localmente, pero falló la subida al FTP: {ftp_msg}. Puedes reintentar la subida desde el panel 'Sincronización FTP'."
+                    st.session_state['validador_warning'] = (
+                        f"Exportación completada en la nube (data/), pero falló la subida al FTP: {ftp_msg}. "
+                        "Sin FTP, el servidor Presea no verá Clientes_web.dbi en Importa. "
+                        "Reintentá desde 'Sincronización FTP' o marcá A Exportar y dejá que windows_sync genere en Importa."
+                    )
                 st.rerun()
             
     except Exception as e:

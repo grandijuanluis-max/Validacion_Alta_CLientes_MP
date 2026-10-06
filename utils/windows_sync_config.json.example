@@ -1,8 +1,9 @@
 {
-  "FTP_HOST": "messina.dns-dns.com",
+  "FTP_HOST": "192.168.100.2",
   "FTP_PORT": 59921,
   "FTP_USER": "usuario_ftp",
   "FTP_PASS": "password_ftp",
+  "FTP_SCAN_FALLBACK": false,
   "SUPABASE_URL": "https://TU_PROYECTO.supabase.co",
   "SUPABASE_KEY": "tu_service_role_o_anon_key",
   "IMPORTA_DIR": "F:\\Clientes\\Pasina\\EXPORTACIONES\\Validador\\Importa",

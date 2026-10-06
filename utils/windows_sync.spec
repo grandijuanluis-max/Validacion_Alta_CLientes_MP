@@ -2,17 +2,28 @@
 # Build desde carpeta utils:  pyinstaller --clean windows_sync.spec
 import os
 
+from PyInstaller.utils.hooks import collect_submodules
+
 UTILS_DIR = SPECPATH
 ROOT_DIR = os.path.dirname(UTILS_DIR)
 
+_modulos_hidden = collect_submodules("modulos")
+
 a = Analysis(
-    [os.path.join(UTILS_DIR, "windows_sync.py")],
+    [
+        os.path.join(UTILS_DIR, "windows_sync.py"),
+        os.path.join(UTILS_DIR, "dbi_clientes.py"),
+        os.path.join(UTILS_DIR, "ventas_importer.py"),
+        os.path.join(UTILS_DIR, "dbi_clientes_loader.py"),
+        os.path.join(UTILS_DIR, "ventas_importer_loader.py"),
+    ],
     pathex=[UTILS_DIR, ROOT_DIR],
     binaries=[],
     datas=[
         (os.path.join(UTILS_DIR, "windows_sync_config.json.example"), "."),
     ],
-    hiddenimports=[
+    hiddenimports=_modulos_hidden
+    + [
         "dbf",
         "dbi_clientes",
         "ventas_importer",
