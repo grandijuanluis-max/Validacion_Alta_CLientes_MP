@@ -68,9 +68,35 @@ EXPORTA_DIR\CLIENTESPA.DBI
 
 ---
 
-## Paso 4 — Programar tareas
+## Paso 4 — Programar tareas (sin intervención manual)
 
-Lun–vie 09:00, 13:00, 17:00 → ejecutar `windows_sync.exe`.
+En el servidor, desde la carpeta del exe:
+
+```text
+programar_sincronizador.bat
+```
+
+(Ejecutar como administrador si `schtasks` falla.) Crea tres tareas lun–vie **09:00, 13:00, 17:00**.
+
+Alternativa: Programador de tareas → acción = `windows_sync.exe`, **Iniciar en** = carpeta del exe (donde está el JSON).
+
+---
+
+## Operación cerrada (qué hace cada uno)
+
+| Quién | Acción | Automático después |
+|--------|--------|---------------------|
+| Vendedor | Alta en la app | Queda `Pendiente` |
+| Validador | **Marcar para Exportar (Aprobado)** | Queda `A Exportar` (no usar “Exportar todos” en producción salvo urgencia) |
+| `windows_sync.exe` (programado) | Lee `A Exportar` → escribe **Importa** local + marca `Exportado` | Presea absorbe Importa |
+| Presea ERP | Exporta `CLIENTESPA.DBI` a **Exporta** | El sync importa a Supabase |
+| App web (opcional) | Si subís al FTP desde Streamlit | El sync **baja** FTP → Importa si no generó local |
+
+**JSON del servidor (una vez):** `FTP_HOSTS` con DNS + IP LAN, `FTP_SCAN_FALLBACK: false`, rutas `IMPORTA_DIR` / `EXPORTA_DIR` correctas, Supabase OK.
+
+**No hace falta** volver a tocar el JSON si la red no cambia. **Sí** reemplazar el exe cuando subís una versión nueva del repo (recompilar en Windows).
+
+**Evitar:** dejar `Clientes_web.dbi` viejo en Importa más de `IMPORTA_PENDING_MAX_HOURS` (default 3 h) sin que Presea lo procese — bloquea nuevos lotes hasta moverlo a `No_process` o que Presea lo importe.
 
 ---
 
@@ -101,7 +127,7 @@ LIMIT 10;
 |--------|--------|
 | `[Errno 11001] getaddrinfo failed` al inicio | `SUPABASE_URL` sigue siendo plantilla o URL mal escrita. Debe ser `https://xxxx.supabase.co` (copiar del panel Supabase). |
 | Se creó config desde plantilla + “credenciales cifradas” | La 1ª corrida generó el JSON; **editá** ese archivo con datos reales y volvé a ejecutar. |
-| Muchos intentos FTP y timeout | `FTP_HOST` / puerto incorrectos para **esta** red. En LAN suele ser IP tipo `192.168.100.2` y puerto `59921`, no el DNS público. |
+| Muchos intentos FTP y timeout | Usá **`FTP_HOSTS`**: DNS + IP LAN en orden; `FTP_SCAN_FALLBACK: false`. |
 | No aparece CLIENTESPA en log | No hay DBI en `EXPORTA_DIR` o ya está en `Subidos` |
 | `nuevos=0`, omitidos altos | Códigos ya están en Supabase (normal en padrón completo) |
 | `Faltan columnas origen/codigo` | Ejecutar `supabase_migration_presea_clientes.sql` |
