@@ -11,6 +11,8 @@ PRESEA_EXTRA_COLS = frozenset({
 ESTADOS_ACTIVOS_APP = ("Pendiente", "Modificado", "A Exportar")
 SUPABASE_PAGE_SIZE = 1000
 APP_CODIGO_MIN = 40000
+# Próximo código nuevo a asignar (piso). Ajustar si ERP ya consumió hasta 400016.
+APP_CODIGO_PROXIMO_PISO = 40017
 
 
 def _parse_codigo_app(val) -> int | None:
@@ -22,32 +24,85 @@ def _parse_codigo_app(val) -> int | None:
         return None
 
 
-def _max_codigo_app_en_db(supabase) -> int:
-    """Mayor código app (>= 40000) ya persistido en clientes_pendientes."""
-    try:
+def _map_codigos_app_ocupados(supabase) -> dict[int, str]:
+    """codigo (>=40000) → id del cliente que lo tiene en Supabase."""
+    mapping: dict[int, str] = {}
+    offset = 0
+    while True:
         res = (
             supabase.table("clientes_pendientes")
-            .select("codigo")
-            .eq("origen", "app")
+            .select("id, codigo")
             .gte("codigo", APP_CODIGO_MIN)
-            .order("codigo", desc=True)
-            .limit(1)
+            .order("codigo")
+            .range(offset, offset + SUPABASE_PAGE_SIZE - 1)
             .execute()
         )
-        if res.data and res.data[0].get("codigo") is not None:
-            return int(float(res.data[0]["codigo"]))
-    except Exception:
-        pass
-    return APP_CODIGO_MIN - 1
+        rows = res.data or []
+        for row in rows:
+            cod = _parse_codigo_app(row.get("codigo"))
+            if cod is not None:
+                mapping[cod] = str(row["id"])
+        if len(rows) < SUPABASE_PAGE_SIZE:
+            break
+        offset += SUPABASE_PAGE_SIZE
+    return mapping
+
+
+def _siguiente_codigo_libre(desde: int, ocupados: set[int]) -> int:
+    c = max(desde, APP_CODIGO_MIN, APP_CODIGO_PROXIMO_PISO)
+    while c in ocupados:
+        c += 1
+    return c
 
 
 def leer_inicio_secuencia_app(supabase) -> int:
-    """Próximo código disponible para altas web (>= 40000). No retrocede por sync ERP."""
+    """
+    Próximo código libre para altas web (>= 40000).
+    Respeta APP_CODIGO_PROXIMO_PISO y no reutiliza códigos ya en clientes_pendientes.
+    """
+    ocupados = set(_map_codigos_app_ocupados(supabase).keys())
     res = supabase.table("secuencia_codigo").select("ultimo_valor").eq("id", 1).execute()
     ultimo_tabla = 0 if not res.data else int(res.data[0].get("ultimo_valor") or 0)
-    ultimo_db = _max_codigo_app_en_db(supabase)
-    base = max(ultimo_tabla, ultimo_db, APP_CODIGO_MIN - 1)
-    return max(APP_CODIGO_MIN, base + 1)
+    max_ocupado = max(ocupados) if ocupados else APP_CODIGO_MIN - 1
+    desde = max(ultimo_tabla, max_ocupado) + 1
+    return _siguiente_codigo_libre(desde, ocupados)
+
+
+def fijar_piso_secuencia_app(supabase, ultimo_asignado: int = APP_CODIGO_PROXIMO_PISO - 1) -> int:
+    """
+    Asegura secuencia_codigo.ultimo_valor >= ultimo_asignado (ej. 400016 → próximo 400017).
+    Retorna el próximo código que usaría leer_inicio_secuencia_app.
+    """
+    piso = max(int(ultimo_asignado), APP_CODIGO_PROXIMO_PISO - 1)
+    res = supabase.table("secuencia_codigo").select("id, ultimo_valor").eq("id", 1).execute()
+    if res.data:
+        actual = int(res.data[0].get("ultimo_valor") or 0)
+        nuevo = max(actual, piso)
+        supabase.table("secuencia_codigo").update({"ultimo_valor": nuevo}).eq("id", 1).execute()
+    else:
+        supabase.table("secuencia_codigo").insert({"id": 1, "ultimo_valor": piso}).execute()
+    return leer_inicio_secuencia_app(supabase)
+
+
+def _row_id(row: dict) -> str:
+    return str(row.get("id") or "")
+
+
+def _es_origen_exportable_app(row: dict) -> bool:
+    """Sincronizador Importa: altas web (origen app o legacy sin origen)."""
+    origen = (row.get("origen") or "app").strip().lower()
+    return origen in ("", "app")
+
+
+def fetch_a_exportar_diagnostico(supabase) -> list[dict]:
+    """Todas las filas en cola A Exportar (cualquier origen), para logs de soporte."""
+    query = (
+        supabase.table("clientes_pendientes")
+        .select("id, nombre, cuit, codigo, origen, estado, created_at")
+        .eq("estado", "A Exportar")
+        .order("created_at", desc=True)
+    )
+    return _fetch_paginated(query)
 
 
 def fetch_clientes_a_exportar(supabase) -> list[dict]:
@@ -56,10 +111,18 @@ def fetch_clientes_a_exportar(supabase) -> list[dict]:
         supabase.table("clientes_pendientes")
         .select("*")
         .eq("estado", "A Exportar")
-        .eq("origen", "app")
         .order("created_at", desc=True)
     )
-    return _fetch_paginated(query)
+    rows = _fetch_paginated(query)
+    out: list[dict] = []
+    for row in rows:
+        if not _es_origen_exportable_app(row):
+            continue
+        item = dict(row)
+        if not str(item.get("origen") or "").strip():
+            item["origen"] = "app"
+        out.append(item)
+    return out
 
 
 def actualizar_secuencia_erp(supabase, max_codigo_erp: int) -> None:
@@ -76,24 +139,39 @@ def actualizar_secuencia_erp(supabase, max_codigo_erp: int) -> None:
         supabase.table("secuencia_codigo").insert({"id": 1, "ultimo_valor": piso_erp}).execute()
 
 
-def resolver_codigos_app(clientes: list[dict], numero_inicio: int) -> tuple[list[dict], int]:
+def resolver_codigos_app(
+    clientes: list[dict],
+    numero_inicio: int,
+    supabase=None,
+) -> tuple[list[dict], int]:
     """
-    Asigna códigos secuenciales a clientes sin código app válido.
-    Reutiliza el código existente si ya es >= 40000 (re-exportación).
-    Retorna (clientes_con_codigo, último_código_utilizado_en_el_lote).
+    Asigna códigos secuenciales sin reutilizar números ya usados por otro cliente.
+    Reutiliza el código solo si pertenece al mismo id (re-exportación del mismo alta).
     """
-    next_codigo = numero_inicio
-    ultimo_usado = numero_inicio - 1
+    ocupados_map = _map_codigos_app_ocupados(supabase) if supabase is not None else {}
+    ocupados = set(ocupados_map.keys())
+    next_codigo = _siguiente_codigo_libre(numero_inicio, ocupados)
+    ultimo_usado = next_codigo - 1
     result: list[dict] = []
 
     for row in clientes:
         item = dict(row)
+        rid = str(item.get("id") or "")
         existing = _parse_codigo_app(item.get("codigo"))
-        if existing is not None and existing >= APP_CODIGO_MIN:
+        owner = ocupados_map.get(existing) if existing is not None else None
+        reuse = (
+            existing is not None
+            and existing >= APP_CODIGO_PROXIMO_PISO
+            and owner == rid
+        )
+        if reuse:
             item["codigo"] = existing
             ultimo_usado = max(ultimo_usado, existing)
         else:
+            next_codigo = _siguiente_codigo_libre(next_codigo, ocupados)
             item["codigo"] = next_codigo
+            ocupados.add(next_codigo)
+            ocupados_map[next_codigo] = rid
             ultimo_usado = next_codigo
             next_codigo += 1
         result.append(item)

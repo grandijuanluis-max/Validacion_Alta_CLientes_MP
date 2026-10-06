@@ -1173,15 +1173,79 @@ def auto_export_a_exportar_to_importa(config):
 
     try:
         from modulos.presea_db import (
+            APP_CODIGO_PROXIMO_PISO,
+            _es_origen_exportable_app,
+            _row_id,
+            fetch_a_exportar_diagnostico,
             fetch_clientes_a_exportar,
+            fijar_piso_secuencia_app,
             guardar_exportacion_app,
             leer_inicio_secuencia_app,
             resolver_codigos_app,
         )
 
+        importa_dir = config.get("IMPORTA_DIR")
+        if not importa_dir:
+            logger.error("IMPORTA_DIR no configurado; no se puede exportar a Presea.")
+            return False
+        os.makedirs(importa_dir, exist_ok=True)
+        ruta_clientes_web = os.path.join(importa_dir, "Clientes_web.dbi")
+        max_pending_hours = float(config.get("IMPORTA_PENDING_MAX_HOURS", 3))
+        if not force_export and os.path.exists(ruta_clientes_web):
+            age_hours = (
+                now - datetime.datetime.fromtimestamp(os.path.getmtime(ruta_clientes_web))
+            ).total_seconds() / 3600
+            if age_hours < max_pending_hours:
+                msg = (
+                    f"Clientes_web.dbi en IMPORTA tiene {age_hours:.1f}h "
+                    f"(umbral {max_pending_hours}h). Exportación pospuesta hasta que Presea lo procese "
+                    f"(los clientes siguen en 'A Exportar'). Usá --force-auto-export para forzar."
+                )
+                logger.info(msg)
+                log_importa(msg, config)
+                diag = fetch_a_exportar_diagnostico(supabase)
+                if diag:
+                    logger.info(
+                        "Hay %s cliente(s) en 'A Exportar' en Supabase; se exportarán cuando Importa esté libre.",
+                        len(diag),
+                    )
+                return True
+
+        proximo_esperado = fijar_piso_secuencia_app(supabase, APP_CODIGO_PROXIMO_PISO - 1)
+        logger.info(
+            "Secuencia app: próximo código libre >= %s (calculado=%s)",
+            APP_CODIGO_PROXIMO_PISO,
+            proximo_esperado,
+        )
+
         clientes_a_exportar = fetch_clientes_a_exportar(supabase)
         if not clientes_a_exportar:
             logger.info("No hay clientes en estado 'A Exportar' para procesar automáticamente.")
+            diag = fetch_a_exportar_diagnostico(supabase)
+            if not diag:
+                logger.info("Diagnóstico: no hay ningún registro 'A Exportar' en Supabase.")
+            else:
+                logger.info(
+                    "Diagnóstico: %s registro(s) 'A Exportar' en Supabase (revisá origen):",
+                    len(diag),
+                )
+                for r in diag:
+                    ok = _es_origen_exportable_app(r)
+                    logger.info(
+                        "  · origen=%r cuit=%s codigo=%s nombre=%s id=%s incluido_en_sync=%s",
+                        r.get("origen"),
+                        r.get("cuit"),
+                        r.get("codigo"),
+                        (r.get("nombre") or "")[:40],
+                        r.get("id"),
+                        ok,
+                    )
+                    if not ok:
+                        logger.warning(
+                            "    Este cliente no se exporta al Importa (origen=%r). "
+                            "Cambiá origen a 'app' si es un alta web.",
+                            r.get("origen"),
+                        )
             return True
 
         logger.info(
@@ -1198,7 +1262,9 @@ def auto_export_a_exportar_to_importa(config):
             )
 
         numero_inicio = leer_inicio_secuencia_app(supabase)
-        clientes_a_exportar, ultimo_assigned = resolver_codigos_app(clientes_a_exportar, numero_inicio)
+        clientes_a_exportar, ultimo_assigned = resolver_codigos_app(
+            clientes_a_exportar, numero_inicio, supabase=supabase
+        )
         for row in clientes_a_exportar:
             logger.info(
                 "  → Export DBI: codigo=%s cuit=%s nombre=%s",
@@ -1207,26 +1273,7 @@ def auto_export_a_exportar_to_importa(config):
                 (row.get("nombre") or "")[:40],
             )
 
-        # 2. Definir directorio de salida IMPORTA
-        importa_dir = config.get("IMPORTA_DIR")
-        os.makedirs(importa_dir, exist_ok=True)
-
-        ruta_clientes_web = os.path.join(importa_dir, "Clientes_web.dbi")
         ruta_domicilios = os.path.join(importa_dir, "domicilios_entrega.txt")
-
-        max_pending_hours = float(config.get("IMPORTA_PENDING_MAX_HOURS", 3))
-        if not force_export and os.path.exists(ruta_clientes_web):
-            age_hours = (
-                now - datetime.datetime.fromtimestamp(os.path.getmtime(ruta_clientes_web))
-            ).total_seconds() / 3600
-            if age_hours < max_pending_hours:
-                msg = (
-                    f"Clientes_web.dbi en IMPORTA tiene {age_hours:.1f}h "
-                    f"(umbral {max_pending_hours}h). Exportación pospuesta hasta que Presea lo procese."
-                )
-                logger.info(msg)
-                log_importa(msg, config)
-                return True
 
         # Mover archivos viejos en IMPORTA a No_process antes de generar uno nuevo
         archivos_generados = [
@@ -1267,13 +1314,14 @@ def auto_export_a_exportar_to_importa(config):
         if os.path.exists(ruta_memo_web):
             os.remove(ruta_memo_web)
 
-        codigo_por_id = {row["id"]: int(row["codigo"]) for row in clientes_a_exportar}
+        codigo_por_id = {_row_id(row): int(row["codigo"]) for row in clientes_a_exportar}
 
         table = dbf.Table(ruta_clientes_web, schema_str, dbf_type='fp', codepage='cp1252')
         table.open(mode=dbf.READ_WRITE)
 
         for row in clientes_a_exportar:
-            codigo_actual = codigo_por_id[row["id"]]
+            rid = _row_id(row)
+            codigo_actual = codigo_por_id[rid]
             cuit_num = str(row.get('cuit', '0')).replace('-', '').replace(' ', '')
             cuit_num = int(cuit_num) if cuit_num.isdigit() else 0
 
@@ -1324,7 +1372,7 @@ def auto_export_a_exportar_to_importa(config):
         # Escribir domicilios_entrega.txt
         lineas_dom = []
         for row in clientes_a_exportar:
-            codigo_dom = codigo_por_id[row["id"]]
+            codigo_dom = codigo_por_id[_row_id(row)]
             codigo_mask = f"{codigo_dom:06d}-000"
             linea_dom = (
                 format_sdf_field(codigo_mask, 10, is_numeric=False) +

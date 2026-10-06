@@ -491,6 +491,8 @@ def render_clientes_pendientes():
                 else:
                     datos_actualizados['estado'] = 'A Exportar'
                     datos_actualizados['exportado_el'] = None
+                    if not str(datos_actualizados.get('origen') or client_data.get('origen') or '').strip():
+                        datos_actualizados['origen'] = 'app'
                     supabase.table('clientes_pendientes').update(datos_actualizados).eq('id', str(client_data['id'])).execute()
                     st.session_state['validador_success'] = f"Cliente {client_data.get('nombre', '')} marcado para exportar exitosamente."
                     if "tabla_pendientes" in st.session_state:
@@ -517,7 +519,7 @@ def render_clientes_pendientes():
             else:
                 numero_inicio = leer_inicio_secuencia_app(supabase)
                 clientes_export, ultimo_assigned = resolver_codigos_app(
-                    clientes_export_list, numero_inicio
+                    clientes_export_list, numero_inicio, supabase=supabase
                 )
                 df_export = pd.DataFrame(clientes_export)
 
